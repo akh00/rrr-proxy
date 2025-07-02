@@ -77,7 +77,7 @@ impl ProxyEndpoint {
                        }
                    }
                },
-               _ = sleep(Duration::from_millis(1000)) => {
+               _ = sleep(Duration::from_millis(5000)) => {
                     break;
                }
             }
@@ -114,36 +114,42 @@ impl ProxyRouterClient {
 
     async fn run(mut self) {
         loop {
-            let _ = match self.rx.recv().await {
-                Some((data, addr)) => {
-                    let client = match self.clients.get(&addr) {
-                        Some(client) => client,
-                        None => {
-                            if let Ok(client) =
-                                ProxyClientHandler::new(self.remote_addr, addr, self.tx.clone())
-                                    .await
-                            {
-                                self.clients.insert(addr, client);
-                            } else {
-                                error!(
-                                    "Can not create new proxy clinet for remote_addr{:?}, addr: {:?}",
-                                    self.remote_addr, addr
-                                );
-                                break;
+            select! {
+                a = self.rx.recv() => {
+                   if let Some((data, addr)) = a {
+                        let client = match self.clients.get(&addr) {
+                            Some(client) => client,
+                            None => {
+                                if let Ok(client) =
+                                    ProxyClientHandler::new(self.remote_addr, addr, self.tx.clone())
+                                        .await
+                                {
+                                    self.clients.insert(addr, client);
+                                } else {
+                                    error!(
+                                        "Can not create new proxy clinet for remote_addr{:?}, addr: {:?}",
+                                        self.remote_addr, addr
+                                    );
+                                    break;
+                                }
+                                self.clients.get(&addr).unwrap()
                             }
-                            self.clients.get(&addr).unwrap()
+                        };
+                        if let Err(_) = client.send(data).await {
+                            error!("Can not send data to proxy clinet {:?}, removing {:?}", client, addr);
+                            self.clients.remove(&addr);
+                            continue;
                         }
-                    };
-                    if let Err(_) = client.send(data).await {
-                        error!("Can not send data to new created proxy clinet {:?}", client);
+                    } else  {
+                        info!("No channel any more finishing ProxyRouterClient");
                         break;
                     }
-                }
-                None => {
-                    info!("No channel any more finishing ProxyRouterClient");
+                },
+                _ = sleep(Duration::from_millis(5000)) => {
+                    info!("No traffic for {:?} exiting", self.remote_addr);
                     break;
-                }
-            };
+               }
+            }
         }
     }
 }
@@ -165,7 +171,7 @@ impl ProxyEndpointHandler {
         let (router_tx, router_rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1000);
 
         let (mgr_sender, msg_reciever) = mpsc::channel::<ProxyClientMsg>(2);
-        let endpoint = ProxyEndpoint::new(local_socket, router_tx, rx);
+        let endpoint = ProxyEndpoint::new(local_socket, router_tx, rx, mgr_sender);
         let handle = tokio::spawn(async move {
             endpoint.run().await;
         });
@@ -223,13 +229,10 @@ impl ProxyClient {
                             error!("Error happened router send {:?} ", error);
                             break;
                         }
-                } else {
-                    {
+                    } else {
                         debug!("ProxyClient: Error sending to socket, existing");
                         break;
                     }
-                }
-
                },
                b = self.rx.recv() => {
                 if let Some(res_buf) = b {
@@ -237,19 +240,19 @@ impl ProxyClient {
                        Ok(_) => {
                             debug!("Sent to ms {:?}", str::from_utf8(res_buf.as_slice()).unwrap());
                             continue;
-                       },
-                    Err(error) => {
+                        },
+                        Err(error) => {
                            error!("ProxyClient: Error happened remote recieve {:?} ", error);
                            break;
-                       }
+                        }
                     }
                 } else {
                     debug!("ProxyClient: Error recieving from channel , existing");
                     break;
                 }
                },
-               else => {
-                    debug!("Something happened, existing");
+               _ = sleep(Duration::from_millis(5000)) => {
+                    info!("No traffic for {:?} exiting", self.addr);
                     break;
                }
             }
