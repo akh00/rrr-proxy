@@ -1,4 +1,5 @@
 use core::net::SocketAddr;
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,7 +40,13 @@ impl Endpoint {
     }
 }
 
-enum ProxyManagerMsg {
+impl fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.ip, self.port)
+    }
+}
+
+pub enum ProxyManagerMsg {
     CreateUdpProxy {
         respond_to: oneshot::Sender<ProxyManagerMsg>,
         endpoint: Endpoint,
@@ -55,6 +62,9 @@ enum ProxyManagerMsg {
         endpoint: Endpoint,
     },
     DeleteUdpProxyRs {},
+    EndpointEnded {
+        endpoint: Endpoint,
+    },
 }
 
 pub struct ProxyManager {
@@ -67,6 +77,7 @@ pub struct ProxyManager {
 impl ProxyManager {
     pub fn new() -> Self {
         let (tx, mut rx) = mpsc::channel::<ProxyManagerMsg>(100);
+        let sender_to_pass = tx.clone();
         let handler_udp = tokio::spawn(async move {
             let mut udp_proxy = HashMap::<Endpoint, ProxyEndpointHandler>::new();
             loop {
@@ -76,8 +87,12 @@ impl ProxyManager {
                             respond_to,
                             endpoint,
                         } => {
-                            let _ = match Self::create_udp_proxy_impl(&mut udp_proxy, endpoint)
-                                .await
+                            let _ = match Self::create_udp_proxy_impl(
+                                &mut udp_proxy,
+                                endpoint,
+                                sender_to_pass.clone(),
+                            )
+                            .await
                             {
                                 Ok(port) => {
                                     respond_to.send(ProxyManagerMsg::CreateUdpProxyRs { port })
@@ -94,7 +109,7 @@ impl ProxyManager {
                             let _ = match Self::delete_udp_proxy_impl(&mut udp_proxy, endpoint)
                                 .await
                             {
-                                Ok(port) => respond_to.send(ProxyManagerMsg::DeleteUdpProxyRs {}),
+                                Ok(_) => respond_to.send(ProxyManagerMsg::DeleteUdpProxyRs {}),
                                 Err(error) => respond_to.send(ProxyManagerMsg::UdpProxyErrorRs {
                                     error: error.to_string(),
                                 }),
@@ -169,11 +184,10 @@ impl ProxyManager {
     async fn create_udp_proxy_impl(
         udp_proxy: &mut HashMap<Endpoint, ProxyEndpointHandler>,
         endpoint: Endpoint,
+        tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
         if !udp_proxy.contains_key(&endpoint) {
-            let new_addr =
-                SocketAddr::from_str(&std::format!("{}:{}", endpoint.ip, endpoint.port))?;
-            let new_proxy = ProxyEndpointHandler::new(new_addr).await?;
+            let new_proxy = ProxyEndpointHandler::new(endpoint.clone(), tx).await?;
             let local_port = new_proxy.local_port;
             udp_proxy.insert(endpoint, new_proxy);
             Ok(local_port)
@@ -191,6 +205,7 @@ impl ProxyManager {
         match udp_proxy.get(&endpoint) {
             Some(handler) => {
                 handler.kill().await;
+                udp_proxy.remove(&endpoint);
                 Ok(())
             }
             None => Err(Box::<dyn Error>::from(std::format!(
