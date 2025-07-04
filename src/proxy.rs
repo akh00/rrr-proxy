@@ -62,7 +62,7 @@ pub enum ProxyManagerMsg {
         endpoint: Endpoint,
     },
     DeleteUdpProxyRs {},
-    EndpointEnded {
+    UdpEndpointEnded {
         endpoint: Endpoint,
     },
 }

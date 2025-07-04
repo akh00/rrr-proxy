@@ -5,16 +5,11 @@ use std::{
 use tokio::{
     net::UdpSocket,
     select,
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        oneshot,
-    },
+    sync::mpsc::{self, Receiver, Sender},
     task::JoinHandle,
-    time::{sleep, timeout},
+    time::sleep,
 };
 use tracing::{debug, error, info, instrument};
-
-use crate::signaling::endpoint;
 
 use super::{Endpoint, ProxyManagerMsg};
 //
@@ -22,13 +17,6 @@ use super::{Endpoint, ProxyManagerMsg};
 //
 //
 //
-#[derive(Debug)]
-enum ProxyClientMsg {
-    KillEndpoint {
-        respond_to: oneshot::Sender<ProxyClientMsg>,
-    },
-    EndpointEnded {},
-}
 
 #[derive(Debug)]
 struct ProxyEndpoint {
@@ -61,39 +49,49 @@ impl ProxyEndpoint {
         loop {
             select! {
                 a = self.udp_socket.recv_from(&mut buf) => {
-                   let (len, addr )= a.unwrap();
-                   debug!("{:?} bytes received from {:?}", len, addr);
-                // to the router
-                    match self.tx.send((buf[..len].to_vec(), addr)).await {
-                        Ok(_) => {
-                            debug!("Sent back to router with addr:{}", addr);
-                        }
-                        Err(error) => {
-                            debug!("Error sending to ruter: {}", error);
-                            break;
-                        }
-                    };
+                   if let Ok((len, addr )) = a {
+                    debug!("{:?} bytes received from {:?}", len, addr);
+                    // to the router
+                        match self.tx.send((buf[..len].to_vec(), addr)).await {
+                            Ok(_) => {
+                                debug!("Sent back to router with addr:{}", addr);
+                            }
+                            Err(error) => {
+                                debug!("Error sending to ruter: {}", error);
+                                break;
+                            }
+                        };
+                    } else {
+                        debug!("Error recieven from socket");
+                        break;
+                    }
                },
                b = self.rx.recv() => {
-                   let (res_buf, addr)= b.unwrap();
-                   match self.udp_socket.send_to(res_buf.as_slice(), addr).await {
-                       Ok(_) => {
-                            debug!("Sent back to client {:?} buf:{:?}", addr, str::from_utf8(res_buf.as_slice()).unwrap());
-                       },
-                       Err(error) => {
-                            debug!("Error happened local recieve{:?} ", error);
-                            break;
-                       }
-                   }
+                   if let Some((res_buf, addr)) = b {
+                        match self.udp_socket.send_to(res_buf.as_slice(), addr).await {
+                            Ok(_) => {
+                                    debug!("Sent back to client {:?} buf:{:?}", addr, str::from_utf8(res_buf.as_slice()).unwrap());
+                            },
+                            Err(error) => {
+                                    debug!("Error happened local recieve{:?} ", error);
+                                    break;
+                            }
+                        }
+                    } else {
+                        debug!("Error happened local recieve");
+                        break;
+
+                    }
                },
                _ = sleep(Duration::from_millis(5000)) => {
+                    info!("No traffic on ProxyEndpoint {:?}, exiting", self.endpoint);
                     break;
                }
             }
         }
         if let Err(err) = self
             .msg_tx
-            .send(ProxyManagerMsg::EndpointEnded {
+            .send(ProxyManagerMsg::UdpEndpointEnded {
                 endpoint: self.endpoint,
             })
             .await
@@ -110,12 +108,14 @@ struct ProxyRouterClient {
     rx: Receiver<(Vec<u8>, SocketAddr)>, // reciever for routing incoming
     clients: HashMap<SocketAddr, ProxyClientHandler>,
     endpoint: Endpoint,
+    msg_tx: Sender<ProxyManagerMsg>,
 }
 
 impl ProxyRouterClient {
     fn new(
         tx: Sender<(Vec<u8>, SocketAddr)>,
         rx: Receiver<(Vec<u8>, SocketAddr)>,
+        msg_tx: Sender<ProxyManagerMsg>,
         endpoint: Endpoint,
     ) -> Self {
         let clients = HashMap::<SocketAddr, ProxyClientHandler>::new();
@@ -124,10 +124,12 @@ impl ProxyRouterClient {
             rx,
             clients,
             endpoint,
+            msg_tx,
         }
     }
 
     async fn run(mut self) {
+        let (tx, mut client_rx) = mpsc::channel::<ProxyClientMsg>(10);
         loop {
             select! {
                 a = self.rx.recv() => {
@@ -136,7 +138,7 @@ impl ProxyRouterClient {
                             Some(client) => client,
                             None => {
                                 if let Ok(client) =
-                                    ProxyClientHandler::new(self.endpoint.clone(), addr, self.tx.clone())
+                                    ProxyClientHandler::new(self.endpoint.clone(), addr, self.tx.clone(), tx.clone())
                                         .await
                                 {
                                     self.clients.insert(addr, client);
@@ -153,6 +155,9 @@ impl ProxyRouterClient {
                         if let Err(_) = client.send(data).await {
                             error!("Can not send data to proxy clinet {:?}, removing {:?}", client, addr);
                             self.clients.remove(&addr);
+                            if self.clients.len() == 0 {
+                                break;
+                            }
                             continue;
                         }
                     } else  {
@@ -160,11 +165,33 @@ impl ProxyRouterClient {
                         break;
                     }
                 },
+                b = client_rx.recv() => {
+                    match b {
+                        Some(msg) => match msg {
+                            ProxyClientMsg::ClientEnded { addr } => {
+                                self.clients.remove(&addr);
+                                if self.clients.len() == 0 {
+                                    break;
+                                }
+                            }
+                        },
+                        None => break,
+                    }
+                },
                 _ = sleep(Duration::from_millis(5000)) => {
                     info!("ProxyRouterClient: No traffic for {:?} exiting", self.endpoint);
                     break;
                }
             }
+        }
+        if let Err(err) = self
+            .msg_tx
+            .send(ProxyManagerMsg::UdpEndpointEnded {
+                endpoint: self.endpoint,
+            })
+            .await
+        {
+            error!("Error happened during sending end message {:?}", err);
         }
     }
 }
@@ -187,11 +214,17 @@ impl ProxyEndpointHandler {
         let (tx, rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1000);
         let (router_tx, router_rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1000);
 
-        let pr_endpoint = ProxyEndpoint::new(local_socket, router_tx, rx, msg_tx, endpoint.clone());
+        let pr_endpoint = ProxyEndpoint::new(
+            local_socket,
+            router_tx,
+            rx,
+            msg_tx.clone(),
+            endpoint.clone(),
+        );
         let handle = tokio::spawn(async move {
             pr_endpoint.run().await;
         });
-        let router = ProxyRouterClient::new(tx.clone(), router_rx, endpoint);
+        let router = ProxyRouterClient::new(tx.clone(), router_rx, msg_tx.clone(), endpoint);
         let router_handle = tokio::spawn(async move {
             router.run().await;
         });
@@ -209,12 +242,17 @@ impl ProxyEndpointHandler {
     }
 }
 
+enum ProxyClientMsg {
+    ClientEnded { addr: SocketAddr },
+}
+
 #[derive(Debug)]
 struct ProxyClient {
     udp_socket: UdpSocket,
     tx: Sender<(Vec<u8>, SocketAddr)>,
     rx: Receiver<Vec<u8>>,
     addr: SocketAddr,
+    msg_tx: Sender<ProxyClientMsg>,
 }
 
 impl ProxyClient {
@@ -223,12 +261,14 @@ impl ProxyClient {
         tx: Sender<(Vec<u8>, SocketAddr)>,
         rx: Receiver<Vec<u8>>,
         addr: SocketAddr,
+        msg_tx: Sender<ProxyClientMsg>,
     ) -> Self {
         ProxyClient {
             udp_socket,
             tx,
             rx,
             addr,
+            msg_tx,
         }
     }
 
@@ -272,6 +312,13 @@ impl ProxyClient {
                }
             }
         }
+        if let Err(err) = self
+            .msg_tx
+            .send(ProxyClientMsg::ClientEnded { addr: self.addr })
+            .await
+        {
+            error!("Error happened during sending end message {:?}", err);
+        }
     }
 }
 
@@ -285,8 +332,9 @@ struct ProxyClientHandler {
 impl ProxyClientHandler {
     async fn new(
         endpoint: Endpoint,
-        cleints_addr: SocketAddr,
+        client_addr: SocketAddr,
         server_sender: Sender<(Vec<u8>, SocketAddr)>,
+        msg_sender: Sender<ProxyClientMsg>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let remote_addr = SocketAddr::from_str(endpoint.to_string().as_str())?;
 
@@ -294,7 +342,8 @@ impl ProxyClientHandler {
         let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
         let handler = match udp_socket.connect(remote_addr).await {
             Ok(_) => {
-                let client = ProxyClient::new(udp_socket, server_sender, rx, cleints_addr);
+                let client =
+                    ProxyClient::new(udp_socket, server_sender, rx, client_addr, msg_sender);
                 tokio::spawn(async move {
                     client.run().await;
                 })
