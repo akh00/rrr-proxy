@@ -1,22 +1,21 @@
 pub mod ebpf;
+pub mod manager;
 pub mod proxy;
-pub mod signaling;
 
+pub use manager::endpoint::*;
 pub use proxy::*;
-pub use signaling::endpoint::*;
 
 #[cfg(test)]
 mod integration_tests {
-    use std::net::UdpSocket;
-    use std::str;
     use std::sync::Arc;
     use std::time::Duration;
+    use std::{net::UdpSocket, str};
 
     use axum::http::StatusCode;
     use axum_test::TestServer;
     use futures::future::join_all;
     use serde_json::{Value, json};
-    use tokio::sync::RwLock;
+    use tokio::{sync::RwLock, time::sleep};
 
     use crate::{AllocatorService, ProxyManager, ProxyManagerShared};
 
@@ -45,14 +44,11 @@ mod integration_tests {
                         );
                         println!("Buffer recieved on  client from: {}", addr_from);
                         std::thread::sleep(Duration::from_millis(10));
+                        assert!(!should_fail, "error not happened!");
                         break;
                     }
                     Err(error) => {
-                        if should_fail {
-                            assert!(true, "error happened {:?}", error);
-                        } else {
-                            assert!(false, "error happened {:?}", error);
-                        }
+                        assert!(should_fail, "error happened {:?}", error);
                         break;
                     }
                 }
@@ -60,9 +56,19 @@ mod integration_tests {
         }
     }
 
-    fn server_endpoint(socket: UdpSocket, msg: &str) -> impl Future<Output = ()> {
+    fn server_endpoint(
+        socket: UdpSocket,
+        msg: &str,
+        timeout: u64,
+        should_fail: bool,
+    ) -> impl Future<Output = ()> {
         async move {
             let mut buf = [0; 64 * 1024];
+            if timeout != 0 {
+                socket
+                    .set_read_timeout(Some(Duration::from_millis(timeout)))
+                    .expect("Timeout should be set");
+            }
             loop {
                 match socket.recv_from(&mut buf) {
                     Ok((len, addr)) => {
@@ -83,7 +89,7 @@ mod integration_tests {
                         break;
                     }
                     Err(error) => {
-                        assert!(false, "error happened {:?}", error);
+                        assert!(should_fail, "error happened: {:?} exiting", error);
                         break;
                     }
                 }
@@ -96,15 +102,20 @@ mod integration_tests {
         init();
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
-        let singnaling_app = AllocatorService::new(Arc::clone(&proxy_manager));
-        let server = TestServer::new(singnaling_app.app).expect("Should create test server");
+        let manager_app = AllocatorService::new(Arc::clone(&proxy_manager));
+        let server = TestServer::new(manager_app.app).expect("Should create test server");
 
         let mut tasks = Vec::new();
         let mut upd_port = 0;
 
         if let Ok(server_udp_socket) = UdpSocket::bind("0.0.0.0:0") {
             upd_port = server_udp_socket.local_addr().unwrap().port();
-            tasks.push(tokio::spawn(server_endpoint(server_udp_socket, "ping")));
+            tasks.push(tokio::spawn(server_endpoint(
+                server_udp_socket,
+                "ping",
+                0,
+                false,
+            )));
         } else {
             assert!(false, "Can not bind socket");
         }
@@ -167,15 +178,20 @@ mod integration_tests {
         init();
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
-        let singnaling_app = AllocatorService::new(Arc::clone(&proxy_manager));
-        let server = TestServer::new(singnaling_app.app).expect("Should create test server");
+        let manager_app = AllocatorService::new(Arc::clone(&proxy_manager));
+        let server = TestServer::new(manager_app.app).expect("Should create test server");
 
         let mut tasks = Vec::new();
         let mut upd_port = 0;
 
         if let Ok(server_udp_socket) = UdpSocket::bind("0.0.0.0:0") {
             upd_port = server_udp_socket.local_addr().unwrap().port();
-            tasks.push(tokio::spawn(server_endpoint(server_udp_socket, "ping")));
+            tasks.push(tokio::spawn(server_endpoint(
+                server_udp_socket,
+                "ping",
+                10000,
+                true,
+            )));
         } else {
             assert!(false, "Can not bind socket");
         }
@@ -227,7 +243,13 @@ mod integration_tests {
             }
         }));
         tasks.push(tokio::spawn(client_recieve(client_reciever, "pong", true)));
-        join_all(tasks).await;
+        join_all(tasks).await.iter().for_each(|res| {
+            if res.is_ok() {
+                assert!(true);
+            } else {
+                assert!(false)
+            }
+        });
         let resp = server
             .delete(&format!("/api/v1/delete/{}", local_port))
             .await;

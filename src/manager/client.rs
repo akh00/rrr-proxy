@@ -3,14 +3,14 @@ use log::{Level, debug, error, info, log_enabled};
 use tokio_tungstenite::connect_async;
 use tungstenite::Message;
 
-pub struct SignalingClient {
+pub struct ManagerClient {
     url: String,
     timeout: u64,
 }
 
-impl SignalingClient {
+impl ManagerClient {
     fn new(url: String) -> Self {
-        SignalingClient { url, timeout: 5000 }
+        ManagerClient { url, timeout: 5000 }
     }
     async fn connect(self, receiver: mpsc::UnboundedReceiver<Message>) -> () {
         use futures::stream::StreamExt;

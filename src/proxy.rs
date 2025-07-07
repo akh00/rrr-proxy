@@ -8,8 +8,8 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::manager::models::{UdpAllocateRequest, UdpAllocateResponse};
 use crate::proxy::udp_client::ProxyEndpointHandler;
-use crate::signaling::models::{UdpAllocateRequest, UdpAllocateResponse};
 
 pub mod tcp;
 pub mod udp_client;
