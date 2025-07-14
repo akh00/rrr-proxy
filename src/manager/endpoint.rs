@@ -10,7 +10,7 @@ use std::{borrow::Cow, sync::Arc, time::Duration};
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 
-use crate::manager::models::UdpAllocateRequest;
+use crate::manager::models::AllocateRequest;
 use crate::proxy::ProxyManagerShared;
 
 pub struct AllocatorService {
@@ -77,9 +77,9 @@ async fn delete_proxy(
 #[axum_macros::debug_handler]
 async fn allocate_proxy(
     State(manager): State<ProxyManagerShared>,
-    Json(body): Json<UdpAllocateRequest>,
+    Json(body): Json<AllocateRequest>,
 ) -> Response {
-    match manager.write().await.create_udp_proxy(body).await {
+    match manager.write().await.create_proxy(body).await {
         Ok(res) => Json(res).into_response(),
         Err(_) => StatusCode::NOT_ACCEPTABLE.into_response(),
     }

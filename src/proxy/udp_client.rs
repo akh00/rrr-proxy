@@ -11,7 +11,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, instrument};
 
-use super::{Endpoint, ProxyManagerMsg};
+use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
 //
 //  agent pattern implementation
 //
@@ -240,10 +240,6 @@ impl ProxyEndpointHandler {
         self.endpoint_handle.abort();
         self.router_handle.abort();
     }
-}
-
-enum ProxyClientMsg {
-    ClientEnded { addr: SocketAddr },
 }
 
 #[derive(Debug)]

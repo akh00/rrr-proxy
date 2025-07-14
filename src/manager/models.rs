@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UdpAllocateRequest {
+pub struct AllocateRequest {
     pub target_ip: String,
     pub target_udp_port: u16,
     pub target_tcp_port: u16,
@@ -10,7 +10,7 @@ pub struct UdpAllocateRequest {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UdpAllocateResponse {
+pub struct AllocateResponse {
     pub proxy_udp_port: u16,
     pub proxy_tcp_port: u16,
     pub proxy_ssl_tcp_port: u16,
