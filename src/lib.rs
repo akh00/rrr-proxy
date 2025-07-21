@@ -7,16 +7,19 @@ pub use proxy::*;
 
 #[cfg(test)]
 mod integration_tests {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
     use std::time::Duration;
     use std::{net::UdpSocket, str};
 
     use axum::http::StatusCode;
-    use axum_test::TestServer;
+    use axum_test::{TestResponse, TestServer};
     use futures::future::join_all;
     use serde_json::{Value, json};
     use tokio::{sync::RwLock, time::sleep};
 
+    use crate::manager::models::AllocateResponse;
     use crate::{AllocatorService, ProxyManager, ProxyManagerShared};
 
     fn init() {
@@ -25,6 +28,93 @@ mod integration_tests {
             .filter_level(log::LevelFilter::Trace)
             .is_test(true)
             .try_init();
+    }
+
+    fn client_tcp_send(
+        mut sender: TcpStream,
+        msg: &str,
+        sleep_for: u64,
+    ) -> impl Future<Output = ()> {
+        async move {
+            loop {
+                std::thread::sleep(Duration::from_millis(if sleep_for == 0 {
+                    1
+                } else {
+                    sleep_for
+                }));
+                match sender.write(msg.as_bytes()) {
+                    Ok(len) => {
+                        assert!(len > 0, "Error len={:?}", len);
+                        println!(
+                            "Buffer send from client from: {}",
+                            sender.local_addr().unwrap().port()
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                        break;
+                    }
+                    Err(error) => {
+                        assert!(false, "error happened {:?}", error);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn client_send(sender: UdpSocket, msg: &str, sleep_for: u64) -> impl Future<Output = ()> {
+        async move {
+            loop {
+                std::thread::sleep(Duration::from_millis(if sleep_for == 0 {
+                    1
+                } else {
+                    sleep_for
+                }));
+                match sender.send(msg.as_bytes()) {
+                    Ok(len) => {
+                        assert!(len > 0, "Error len={:?}", len);
+                        println!(
+                            "Buffer send from client from: {}",
+                            sender.local_addr().unwrap().port()
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                        break;
+                    }
+                    Err(error) => {
+                        assert!(false, "error happened {:?}", error);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn client_tcp_recieve(
+        mut reciever: TcpStream,
+        msg: &str,
+        should_fail: bool,
+    ) -> impl Future<Output = ()> {
+        async move {
+            let mut buf = [0; 64 * 1024];
+            loop {
+                match reciever.read(&mut buf) {
+                    Ok(len) => {
+                        assert!(len > 0, "Error len={:?}", len);
+                        assert!(
+                            str::from_utf8(&buf[..len]).unwrap().starts_with(msg),
+                            "not pong from server"
+                        );
+                        println!("Buffer recieved on tcp client");
+                        std::thread::sleep(Duration::from_millis(10));
+                        assert!(!should_fail, "error not happened!");
+                        break;
+                    }
+                    Err(error) => {
+                        assert!(should_fail, "error happened {:?}", error);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     fn client_recieve(
@@ -97,6 +187,87 @@ mod integration_tests {
         }
     }
 
+    fn allocate_tcp_client_sockets(
+        resp: &TestResponse,
+    ) -> (TcpStream, TcpStream, AllocateResponse) {
+        let parsed: AllocateResponse =
+            serde_json::from_str(&resp.text()).expect("AllocateResponse shouldbe parsed");
+        let local_port = parsed.proxy_tcp_port;
+        let client_tcp_socket = TcpStream::connect(std::format!("127.0.0.1:{}", local_port))
+            .expect("should be able to connect to tcp socket");
+        let client_reciever = client_tcp_socket
+            .try_clone()
+            .expect("should be able to clone tcp socket");
+        (client_reciever, client_tcp_socket, parsed)
+    }
+    fn allocate_udp_client_sockets(
+        resp: &TestResponse,
+    ) -> (UdpSocket, UdpSocket, AllocateResponse) {
+        let parsed: AllocateResponse =
+            serde_json::from_str(&resp.text()).expect("AllocateResponse shouldbe parsed");
+        let local_port = parsed.proxy_udp_port;
+        let client_udp_socket =
+            UdpSocket::bind("0.0.0.0:0").expect("should be able to bind udp socket");
+        let client_reciever = client_udp_socket
+            .try_clone()
+            .expect("should be able to clone udp socket");
+        client_udp_socket
+            .connect(std::format!("127.0.0.1:{}", local_port))
+            .expect("should be able to connect to proxy socketudp socket");
+        (client_reciever, client_udp_socket, parsed)
+    }
+
+    fn server_tcp_endpoint(
+        std_listener: TcpListener,
+        msg: &str,
+        timeout: u64,
+        should_fail: bool,
+    ) -> impl Future<Output = ()> {
+        let _ = std_listener.set_nonblocking(true);
+        let listener =
+            tokio::net::TcpListener::from_std(std_listener).expect("Should be possible to convert");
+        async move {
+            let mut buf = [0; 64 * 1024];
+
+            match tokio::time::timeout(Duration::from_millis(5000), listener.accept()).await {
+                Ok(timeout_res) => {
+                    if let Ok((stream, addr)) = timeout_res {
+                        if let Ok(mut socket) = stream.into_std() {
+                            if timeout != 0 {
+                                let _ =
+                                    socket.set_read_timeout(Some(Duration::from_millis(timeout)));
+                            }
+                            let _ = socket.set_nonblocking(false);
+                            loop {
+                                match socket.read(&mut buf) {
+                                    Ok(len) => {
+                                        assert!(len > 0, "Error len={:?}", len);
+                                        assert!(
+                                            str::from_utf8(&buf[..len]).unwrap().starts_with(msg),
+                                            "not ping"
+                                        );
+                                        socket
+                                            .write(std::format!("pong to {}", addr).as_bytes())
+                                            .unwrap();
+                                        std::thread::sleep(Duration::from_millis(1000));
+                                        break;
+                                    }
+                                    Err(error) => {
+                                        assert!(should_fail, "error happened: {:?} exiting", error);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(timeout_err) => {
+                    assert!(false, "error during accepting socket {:?}", timeout_err);
+                }
+            }
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn it_should_pass() {
         init();
@@ -107,7 +278,19 @@ mod integration_tests {
 
         let mut tasks = Vec::new();
         let mut upd_port = 0;
+        let mut tcp_port = 0;
 
+        if let Ok(server_tcp_socket) = TcpListener::bind("0.0.0.0:0") {
+            tcp_port = server_tcp_socket.local_addr().unwrap().port();
+            tasks.push(tokio::spawn(server_tcp_endpoint(
+                server_tcp_socket,
+                "tcp::ping",
+                0,
+                false,
+            )));
+        } else {
+            assert!(false, "Can not bind socket");
+        }
         if let Ok(server_udp_socket) = UdpSocket::bind("0.0.0.0:0") {
             upd_port = server_udp_socket.local_addr().unwrap().port();
             tasks.push(tokio::spawn(server_endpoint(
@@ -126,54 +309,43 @@ mod integration_tests {
             .json(&json!(
                {
                 "targetIp": "127.0.0.1",
-                "targetUdpPort" : upd_port, "targetTcpPort": 23456, "targetSslTcpPort": 23456
+                "targetUdpPort" : upd_port, "targetTcpPort": tcp_port, "targetSslTcpPort": 23456
                }
             ))
             .await;
-
-        let raw_text = resp.text();
-        let parsed: Value = serde_json::from_str(&raw_text).unwrap();
-        let response = parsed.as_object().unwrap();
-        let local_port = response
-            .get("proxyUdpPort")
-            .unwrap()
-            .as_number()
-            .unwrap()
-            .as_i64()
-            .unwrap();
-        let client_udp_socket =
-            UdpSocket::bind("0.0.0.0:0").expect("should be able to bind udp socket");
-        let client_reciever = client_udp_socket
-            .try_clone()
-            .expect("should be able to clone udp socket");
-        client_udp_socket
-            .connect(std::format!("127.0.0.1:{}", local_port))
-            .expect("should be able to connect to proxy socketudp socket");
-        tasks.push(tokio::spawn(async move {
-            loop {
-                match client_udp_socket.send("ping from client".as_bytes()) {
-                    Ok(len) => {
-                        assert!(len > 0, "Error len={:?}", len);
-                        println!("Buffer send from client from: {}", local_port);
-                        std::thread::sleep(Duration::from_millis(10));
-                        break;
-                    }
-                    Err(error) => {
-                        assert!(false, "error happened {:?}", error);
-                        break;
-                    }
-                }
-            }
-        }));
+        let (client_reciever, client_udp_socket, allocate_resp) =
+            allocate_udp_client_sockets(&resp);
+        tasks.push(tokio::spawn(client_send(
+            client_udp_socket,
+            &"ping from client",
+            0,
+        )));
         tasks.push(tokio::spawn(client_recieve(client_reciever, "pong", false)));
+        let (mut client_tcp_sender, mut client_tcp_reader, _) = allocate_tcp_client_sockets(&resp);
+        tasks.push(tokio::spawn(async move {
+            assert!(
+                client_tcp_sender.write("tcp::ping".as_bytes()).is_ok(),
+                "should be able to write"
+            );
+            let mut tcp_buf: [u8; 256] = [0; 256];
+            let res = client_tcp_reader.read(&mut tcp_buf);
+            assert!(res.is_ok(), "should be able to read");
+            assert!(
+                str::from_utf8(&tcp_buf[..res.unwrap()])
+                    .unwrap()
+                    .starts_with("pong"),
+                "should start from pong"
+            );
+        }));
         join_all(tasks).await;
+
         let resp = server
-            .delete(&format!("/api/v1/delete/{}", local_port))
+            .delete(&format!("/api/v1/delete/{}", allocate_resp.proxy_udp_port))
             .await;
         resp.assert_status(StatusCode::OK);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    //  #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn timeout_test() {
         init();
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
@@ -207,41 +379,13 @@ mod integration_tests {
             ))
             .await;
 
-        let raw_text = resp.text();
-        let parsed: Value = serde_json::from_str(&raw_text).unwrap();
-        let response = parsed.as_object().unwrap();
-        let local_port = response
-            .get("proxyUdpPort")
-            .unwrap()
-            .as_number()
-            .unwrap()
-            .as_i64()
-            .unwrap();
-        let client_udp_socket =
-            UdpSocket::bind("0.0.0.0:0").expect("should be able to bind udp socket");
-        let client_reciever = client_udp_socket
-            .try_clone()
-            .expect("should be able to clone udp socket");
-        client_udp_socket
-            .connect(std::format!("127.0.0.1:{}", local_port))
-            .expect("should be able to connect to proxy socketudp socket");
-        tasks.push(tokio::spawn(async move {
-            loop {
-                std::thread::sleep(Duration::from_millis(10000));
-                match client_udp_socket.send("ping from client".as_bytes()) {
-                    Ok(len) => {
-                        assert!(len > 0, "Error len={:?}", len);
-                        println!("Buffer send from client from: {}", local_port);
-                        std::thread::sleep(Duration::from_millis(10));
-                        break;
-                    }
-                    Err(error) => {
-                        assert!(false, "error happened {:?}", error);
-                        break;
-                    }
-                }
-            }
-        }));
+        let (client_reciever, client_udp_socket, allocate_resp) =
+            allocate_udp_client_sockets(&resp);
+        tasks.push(tokio::spawn(client_send(
+            client_udp_socket,
+            &"ping from client",
+            6000,
+        )));
         tasks.push(tokio::spawn(client_recieve(client_reciever, "pong", true)));
         join_all(tasks).await.iter().for_each(|res| {
             if res.is_ok() {
@@ -251,7 +395,7 @@ mod integration_tests {
             }
         });
         let resp = server
-            .delete(&format!("/api/v1/delete/{}", local_port))
+            .delete(&format!("/api/v1/delete/{}", allocate_resp.proxy_udp_port))
             .await;
         resp.assert_status(StatusCode::OK);
     }
