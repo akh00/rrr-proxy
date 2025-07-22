@@ -23,7 +23,8 @@ impl AllocatorService {
         let app = Router::new()
             // `GET /` goes to `root`
             .route("/api/v1/allocate", post(allocate_proxy))
-            .route("/api/v1/delete/{port}", delete(delete_proxy))
+            .route("/api/v1/delete/udp/{port}", delete(delete_udp_proxy))
+            .route("/api/v1/delete/tcp/{port}", delete(delete_tcp_proxy))
             .layer(
                 ServiceBuilder::new()
                     // Handle errors from middleware
@@ -64,11 +65,22 @@ async fn handle_error(error: BoxError) -> impl IntoResponse {
 }
 
 #[axum_macros::debug_handler]
-async fn delete_proxy(
+async fn delete_udp_proxy(
     State(manager): State<ProxyManagerShared>,
     Path(port): Path<u16>,
 ) -> Response {
     match manager.write().await.delete_udp_proxy(port).await {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(_) => StatusCode::BAD_REQUEST.into_response(),
+    }
+}
+
+#[axum_macros::debug_handler]
+async fn delete_tcp_proxy(
+    State(manager): State<ProxyManagerShared>,
+    Path(port): Path<u16>,
+) -> Response {
+    match manager.write().await.delete_tcp_proxy(port).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(_) => StatusCode::BAD_REQUEST.into_response(),
     }

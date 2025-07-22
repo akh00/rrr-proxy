@@ -16,6 +16,7 @@ mod integration_tests {
     use axum::http::StatusCode;
     use axum_test::{TestResponse, TestServer};
     use futures::future::join_all;
+    use log::info;
     use serde_json::{Value, json};
     use tokio::{sync::RwLock, time::sleep};
 
@@ -223,11 +224,11 @@ mod integration_tests {
         timeout: u64,
         should_fail: bool,
     ) -> impl Future<Output = ()> {
-        let _ = std_listener.set_nonblocking(true);
-        let listener =
-            tokio::net::TcpListener::from_std(std_listener).expect("Should be possible to convert");
         async move {
             let mut buf = [0; 64 * 1024];
+            let _ = std_listener.set_nonblocking(true);
+            let listener = tokio::net::TcpListener::from_std(std_listener)
+                .expect("Should be possible to convert");
 
             match tokio::time::timeout(Duration::from_millis(5000), listener.accept()).await {
                 Ok(timeout_res) => {
@@ -238,6 +239,7 @@ mod integration_tests {
                                     socket.set_read_timeout(Some(Duration::from_millis(timeout)));
                             }
                             let _ = socket.set_nonblocking(false);
+                            let mut socket_write = socket.try_clone().unwrap();
                             loop {
                                 match socket.read(&mut buf) {
                                     Ok(len) => {
@@ -246,9 +248,10 @@ mod integration_tests {
                                             str::from_utf8(&buf[..len]).unwrap().starts_with(msg),
                                             "not ping"
                                         );
-                                        socket
+                                        socket_write
                                             .write(std::format!("pong to {}", addr).as_bytes())
                                             .unwrap();
+                                        info!("writing back to tcp connection");
                                         std::thread::sleep(Duration::from_millis(1000));
                                         break;
                                     }
@@ -265,6 +268,7 @@ mod integration_tests {
                     assert!(false, "error during accepting socket {:?}", timeout_err);
                 }
             }
+            info!("exiting from tcp server endpoint");
         }
     }
 
@@ -321,14 +325,19 @@ mod integration_tests {
             0,
         )));
         tasks.push(tokio::spawn(client_recieve(client_reciever, "pong", false)));
-        let (mut client_tcp_sender, mut client_tcp_reader, _) = allocate_tcp_client_sockets(&resp);
+        let (mut client_tcp_sender, mut client_tcp_reader, allocate_resp) =
+            allocate_tcp_client_sockets(&resp);
         tasks.push(tokio::spawn(async move {
+            info!("sending tcp ping....");
             assert!(
                 client_tcp_sender.write("tcp::ping".as_bytes()).is_ok(),
                 "should be able to write"
             );
+            info!("sent tcp ping....");
             let mut tcp_buf: [u8; 256] = [0; 256];
+            info!("reading from tcp socket");
             let res = client_tcp_reader.read(&mut tcp_buf);
+            info!("read from tcp socket");
             assert!(res.is_ok(), "should be able to read");
             assert!(
                 str::from_utf8(&tcp_buf[..res.unwrap()])
@@ -338,14 +347,27 @@ mod integration_tests {
             );
         }));
         join_all(tasks).await;
+        info!("all tasks are finished");
 
         let resp = server
-            .delete(&format!("/api/v1/delete/{}", allocate_resp.proxy_udp_port))
+            .delete(&format!(
+                "/api/v1/delete/udp/{}",
+                allocate_resp.proxy_udp_port
+            ))
             .await;
         resp.assert_status(StatusCode::OK);
+        info!("deleted udp endpoint");
+        let resp = server
+            .delete(&format!(
+                "/api/v1/delete/tcp/{}",
+                allocate_resp.proxy_tcp_port
+            ))
+            .await;
+        info!("deleted tcp endpoint");
+        resp.assert_status(StatusCode::OK)
     }
 
-    //  #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn timeout_test() {
         init();
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
@@ -395,7 +417,10 @@ mod integration_tests {
             }
         });
         let resp = server
-            .delete(&format!("/api/v1/delete/{}", allocate_resp.proxy_udp_port))
+            .delete(&format!(
+                "/api/v1/delete/udp/{}",
+                allocate_resp.proxy_udp_port
+            ))
             .await;
         resp.assert_status(StatusCode::OK);
     }

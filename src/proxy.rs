@@ -76,7 +76,12 @@ pub enum ProxyManagerMsg {
         respond_to: oneshot::Sender<ProxyManagerMsg>,
         endpoint: Endpoint,
     },
+    DeleteTcpProxy {
+        respond_to: oneshot::Sender<ProxyManagerMsg>,
+        endpoint: Endpoint,
+    },
     DeleteUdpProxyRs {},
+    DeleteTcpProxyRs {},
     UdpEndpointEnded {
         endpoint: Endpoint,
     },
@@ -140,21 +145,15 @@ impl ProxyManager {
                                 }),
                             };
                         }
-                        ProxyManagerMsg::CreateUdpProxy {
+                        ProxyManagerMsg::DeleteTcpProxy {
                             respond_to,
                             endpoint,
                         } => {
-                            let _ = match Self::create_udp_proxy_impl(
-                                &mut udp_proxy,
-                                endpoint,
-                                sender_to_pass.clone(),
-                            )
-                            .await
+                            let _ = match Self::delete_tcp_proxy_impl(&mut tcp_proxy, endpoint)
+                                .await
                             {
-                                Ok(port) => {
-                                    respond_to.send(ProxyManagerMsg::CreateUdpProxyRs { port })
-                                }
-                                Err(error) => respond_to.send(ProxyManagerMsg::UdpProxyErrorRs {
+                                Ok(_) => respond_to.send(ProxyManagerMsg::DeleteTcpProxyRs {}),
+                                Err(error) => respond_to.send(ProxyManagerMsg::TcpProxyErrorRs {
                                     error: error.to_string(),
                                 }),
                             };
@@ -178,11 +177,11 @@ impl ProxyManager {
                                     .await
                                 {
                                     Ok(_) => {
-                                        info!("The endpoint: {:?} ended", endpoint);
+                                        info!("The udp endpoint: {:?} ended", endpoint);
                                     }
                                     Err(error) => {
                                         warn!(
-                                            "Error deleting endpoint: {:?}: {:?}",
+                                            "Error deleting udp endpoint: {:?}: {:?}",
                                             endpoint, error
                                         );
                                     }
@@ -195,11 +194,11 @@ impl ProxyManager {
                                     .await
                                 {
                                     Ok(_) => {
-                                        info!("The endpoint: {:?} ended", endpoint);
+                                        info!("The tcp endpoint: {:?} ended", endpoint);
                                     }
                                     Err(error) => {
                                         warn!(
-                                            "Error deleting endpoint: {:?}: {:?}",
+                                            "Error deleting tcp endpoint: {:?}: {:?}",
                                             endpoint, error
                                         );
                                     }
@@ -235,12 +234,44 @@ impl ProxyManager {
             Ok(res) => match res {
                 ProxyManagerMsg::DeleteUdpProxyRs {} => Ok(()),
                 ProxyManagerMsg::UdpProxyErrorRs { error } => Err(Box::<dyn Error>::from(error)),
-                _ => Err(Box::<dyn Error>::from("Somethoing happened")),
+                _ => Err(Box::<dyn Error>::from(
+                    "Something happened during udp endpoint deletion",
+                )),
             },
-            Err(_) => Err(Box::<dyn Error>::from("Somethoing happened")),
+            Err(_) => Err(Box::<dyn Error>::from(
+                "Something happened during udp endpoint deletion",
+            )),
         };
         Ok(())
     }
+
+    pub async fn delete_tcp_proxy(&mut self, port: u16) -> Result<(), Box<dyn Error>> {
+        let endpoint = match self.tcp_endpoints.get(&port) {
+            Some(endpoint) => endpoint,
+            None => return Err(Box::<dyn Error>::from("No such endpoint")),
+        };
+        let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
+        self.tx
+            .send(ProxyManagerMsg::DeleteTcpProxy {
+                respond_to: rx,
+                endpoint: endpoint.clone(),
+            })
+            .await?;
+        let _ = match one_shot_tx.await {
+            Ok(res) => match res {
+                ProxyManagerMsg::DeleteTcpProxyRs {} => Ok(()),
+                ProxyManagerMsg::TcpProxyErrorRs { error } => Err(Box::<dyn Error>::from(error)),
+                _ => Err(Box::<dyn Error>::from(
+                    "Something happened during tcp endpoint deletion",
+                )),
+            },
+            Err(_) => Err(Box::<dyn Error>::from(
+                "Something happened during tcp endpoint deletion",
+            )),
+        };
+        Ok(())
+    }
+
     pub async fn create_proxy(
         &mut self,
         request: AllocateRequest,

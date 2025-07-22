@@ -73,7 +73,7 @@ impl ProxyEndpoint {
                                     debug!("Sent back to client {:?} buf:{:?}", addr, str::from_utf8(res_buf.as_slice()).unwrap());
                             },
                             Err(error) => {
-                                    debug!("Error happened local recieve{:?} ", error);
+                                    debug!("Error happened local recieve {:?} ", error);
                                     break;
                             }
                         }

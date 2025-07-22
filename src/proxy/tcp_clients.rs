@@ -45,6 +45,7 @@ impl ProxyTcpClient {
             select! {
                 _ = self.cl_stream.readable() => {
                     match self.cl_stream.try_read(&mut buf) {
+                        Ok(0) => break,
                         Ok(len) => {
                         // Wait for the socket to be writable
                         if let Ok(_) = self.s_stream.writable().await {
@@ -55,7 +56,7 @@ impl ProxyTcpClient {
                         },
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                             continue;
-                        }
+                        },
                         Err(e) => {
                             error!("could not read from tcp endpoint {:?}", e);
                             break;
@@ -65,6 +66,7 @@ impl ProxyTcpClient {
 
                _ = self.s_stream.readable() => {
                 match self.s_stream.try_read(&mut buf) {
+                    Ok(0) => break,
                     Ok(len) => {
                     // Wait for the socket to be writable
                     if let Ok(_) = self.cl_stream.writable().await {
