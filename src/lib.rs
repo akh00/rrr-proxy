@@ -17,11 +17,11 @@ mod integration_tests {
     use axum_test::{TestResponse, TestServer};
     use futures::future::join_all;
     use log::info;
-    use serde_json::{Value, json};
-    use tokio::{sync::RwLock, time::sleep};
+    use serde_json::json;
+    use tokio::sync::RwLock;
 
     use crate::manager::models::AllocateResponse;
-    use crate::{AllocatorService, ProxyManager, ProxyManagerShared};
+    use crate::{AllocatorService, ProxyManager};
 
     fn init() {
         let _ = env_logger::builder()
@@ -29,37 +29,6 @@ mod integration_tests {
             .filter_level(log::LevelFilter::Trace)
             .is_test(true)
             .try_init();
-    }
-
-    fn client_tcp_send(
-        mut sender: TcpStream,
-        msg: &str,
-        sleep_for: u64,
-    ) -> impl Future<Output = ()> {
-        async move {
-            loop {
-                std::thread::sleep(Duration::from_millis(if sleep_for == 0 {
-                    1
-                } else {
-                    sleep_for
-                }));
-                match sender.write(msg.as_bytes()) {
-                    Ok(len) => {
-                        assert!(len > 0, "Error len={:?}", len);
-                        println!(
-                            "Buffer send from client from: {}",
-                            sender.local_addr().unwrap().port()
-                        );
-                        std::thread::sleep(Duration::from_millis(10));
-                        break;
-                    }
-                    Err(error) => {
-                        assert!(false, "error happened {:?}", error);
-                        break;
-                    }
-                }
-            }
-        }
     }
 
     fn client_send(sender: UdpSocket, msg: &str, sleep_for: u64) -> impl Future<Output = ()> {
@@ -82,35 +51,6 @@ mod integration_tests {
                     }
                     Err(error) => {
                         assert!(false, "error happened {:?}", error);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    fn client_tcp_recieve(
-        mut reciever: TcpStream,
-        msg: &str,
-        should_fail: bool,
-    ) -> impl Future<Output = ()> {
-        async move {
-            let mut buf = [0; 64 * 1024];
-            loop {
-                match reciever.read(&mut buf) {
-                    Ok(len) => {
-                        assert!(len > 0, "Error len={:?}", len);
-                        assert!(
-                            str::from_utf8(&buf[..len]).unwrap().starts_with(msg),
-                            "not pong from server"
-                        );
-                        println!("Buffer recieved on tcp client");
-                        std::thread::sleep(Duration::from_millis(10));
-                        assert!(!should_fail, "error not happened!");
-                        break;
-                    }
-                    Err(error) => {
-                        assert!(should_fail, "error happened {:?}", error);
                         break;
                     }
                 }

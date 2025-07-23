@@ -37,6 +37,25 @@ impl ProxyTcpClient {
             msg_tx,
         })
     }
+    async fn write_to_stream(tcp_stream: &TcpStream, buf: &[u8]) -> Result<(), Box<dyn Error>> {
+        loop {
+            select! {
+                _ = tcp_stream.writable() => {
+                    match tcp_stream.try_write(buf) {
+                        Ok(_) => break,
+                        Err(_) => continue,
+                    }
+
+                },
+                _ = sleep(Duration::from_millis(1000)) => {
+                    return Err(Box::<dyn Error>::from(
+                        "Can not write to tcp stream, timeout",
+                    ))
+               }
+            }
+        }
+        Ok(())
+    }
 
     #[instrument(level = "debug")]
     pub async fn run(self) {
@@ -47,11 +66,9 @@ impl ProxyTcpClient {
                     match self.cl_stream.try_read(&mut buf) {
                         Ok(0) => break,
                         Ok(len) => {
-                        // Wait for the socket to be writable
-                        if let Ok(_) = self.s_stream.writable().await {
-                            if let Err(err) = self.s_stream.try_write(&buf[0..len]) {
+                            if let Err(err) = Self::write_to_stream(&self.s_stream, &buf[0..len]).await {
                                 error!("could not write to tcp endpoint {:?}", err);
-                               }
+                                break;
                             }
                         },
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -68,11 +85,9 @@ impl ProxyTcpClient {
                 match self.s_stream.try_read(&mut buf) {
                     Ok(0) => break,
                     Ok(len) => {
-                    // Wait for the socket to be writable
-                    if let Ok(_) = self.cl_stream.writable().await {
-                        if let Err(err) = self.cl_stream.try_write(&buf[0..len]) {
+                        if let Err(err) = Self::write_to_stream(&self.cl_stream, &buf[0..len]).await {
                             error!("could not write to tcp endpoint {:?}", err);
-                           }
+                            break;
                         }
                     },
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -96,7 +111,10 @@ impl ProxyTcpClient {
             .send(ProxyClientMsg::ClientEnded { addr: self.addr })
             .await
         {
-            error!("Error happened during sending end message {:?}", err);
+            info!(
+                "Reciever already dropped while sending end message {:?}",
+                err
+            );
         }
     }
 }
@@ -196,7 +214,10 @@ impl ProxyTcpEndpoint {
             })
             .await
         {
-            error!("Error happened during sending end message {:?}", err);
+            info!(
+                "Reciever already dropped while sending end message {:?}",
+                err
+            );
         }
         ()
     }

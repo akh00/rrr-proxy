@@ -96,7 +96,10 @@ impl ProxyEndpoint {
             })
             .await
         {
-            error!("Error happened during sending end message {:?}", err);
+            info!(
+                "Reciever already dropped while sending end message {:?}",
+                err
+            );
         }
         ()
     }
@@ -191,7 +194,10 @@ impl ProxyRouterClient {
             })
             .await
         {
-            error!("Error happened during sending end message {:?}", err);
+            info!(
+                "Reciever already dropped while sending end message {:?}",
+                err
+            );
         }
     }
 }
@@ -313,7 +319,10 @@ impl ProxyClient {
             .send(ProxyClientMsg::ClientEnded { addr: self.addr })
             .await
         {
-            error!("Error happened during sending end message {:?}", err);
+            info!(
+                "Reciever already dropped while sending end message {:?}",
+                err
+            );
         }
     }
 }
