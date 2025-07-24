@@ -14,7 +14,6 @@ use crate::manager::models::AllocateRequest;
 use crate::proxy::ProxyManagerShared;
 
 pub struct AllocatorService {
-    proxy: ProxyManagerShared,
     pub app: Router,
 }
 
@@ -35,7 +34,7 @@ impl AllocatorService {
                     .layer(TraceLayer::new_for_http()),
             )
             .with_state(Arc::clone(&proxy));
-        AllocatorService { proxy, app }
+        AllocatorService { app }
     }
 
     pub async fn start(&mut self, port: u16) {

@@ -257,7 +257,7 @@ mod integration_tests {
                }
             ))
             .await;
-        let (client_reciever, client_udp_socket, allocate_resp) =
+        let (client_reciever, client_udp_socket, _allocate_resp) =
             allocate_udp_client_sockets(&resp);
         tasks.push(tokio::spawn(client_send(
             client_udp_socket,

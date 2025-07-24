@@ -6,7 +6,6 @@ use std::{collections::HashMap, error::Error};
 use tcp_clients::ProxyTcpEndpointHandler;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::{RwLock, oneshot};
-use tokio::task::JoinHandle;
 
 use crate::manager::models::{AllocateRequest, AllocateResponse};
 use crate::proxy::udp_client::ProxyEndpointHandler;
@@ -91,7 +90,6 @@ pub enum ProxyManagerMsg {
 }
 
 pub struct ProxyManager {
-    handler: JoinHandle<()>,
     tx: Sender<ProxyManagerMsg>,
     udp_endpoints: HashMap<u16, Endpoint>,
     tcp_endpoints: HashMap<u16, Endpoint>,
@@ -101,7 +99,7 @@ impl ProxyManager {
     pub fn new() -> Self {
         let (tx, mut rx) = mpsc::channel::<ProxyManagerMsg>(100);
         let sender_to_pass = tx.clone();
-        let handler = tokio::spawn(async move {
+        let _ = tokio::spawn(async move {
             let mut udp_proxy = HashMap::<Endpoint, ProxyEndpointHandler>::new();
             let mut tcp_proxy = HashMap::<Endpoint, ProxyTcpEndpointHandler>::new();
             loop {
@@ -211,7 +209,6 @@ impl ProxyManager {
             }
         });
         ProxyManager {
-            handler,
             tx: tx,
             udp_endpoints: HashMap::<u16, Endpoint>::new(),
             tcp_endpoints: HashMap::<u16, Endpoint>::new(),

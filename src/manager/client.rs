@@ -1,5 +1,5 @@
 use futures::{channel::mpsc, future::select, pin_mut};
-use log::{Level, debug, error, info, log_enabled};
+use log::debug;
 use tokio_tungstenite::connect_async;
 use tungstenite::Message;
 

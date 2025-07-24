@@ -37,6 +37,29 @@ impl ProxyTcpClient {
             msg_tx,
         })
     }
+
+    #[inline]
+    async fn read_and_write(
+        read_stream: &TcpStream,
+        write_stream: &TcpStream,
+        mut buf: &mut [u8],
+    ) -> Result<(), Box<dyn Error>> {
+        _ = read_stream.readable().await?;
+        match read_stream.try_read(&mut buf) {
+            Ok(0) => Err(Box::<dyn Error>::from("socket is closed")),
+            Ok(len) => {
+                Self::write_to_stream(write_stream, &buf[0..len]).await?;
+                Ok(())
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(()),
+            Err(e) => {
+                error!("could not read from tcp endpoint {:?}", e);
+                Err(Box::<dyn Error>::from("socket is closed"))
+            }
+        }
+    }
+
+    #[inline]
     async fn write_to_stream(tcp_stream: &TcpStream, buf: &[u8]) -> Result<(), Box<dyn Error>> {
         loop {
             select! {
@@ -59,51 +82,16 @@ impl ProxyTcpClient {
 
     #[instrument(level = "debug")]
     pub async fn run(self) {
-        let mut buf = [0; 64 * 1024];
+        let mut bufi = [0; 64 * 1024];
+        let mut bufo = [0; 64 * 1024];
         loop {
             select! {
-                _ = self.cl_stream.readable() => {
-                    match self.cl_stream.try_read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(len) => {
-                            if let Err(err) = Self::write_to_stream(&self.s_stream, &buf[0..len]).await {
-                                error!("could not write to tcp endpoint {:?}", err);
-                                break;
-                            }
-                        },
-                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            continue;
-                        },
-                        Err(e) => {
-                            error!("could not read from tcp endpoint {:?}", e);
-                            break;
-                        }
-                    }
-                },
-
-               _ = self.s_stream.readable() => {
-                match self.s_stream.try_read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(len) => {
-                        if let Err(err) = Self::write_to_stream(&self.cl_stream, &buf[0..len]).await {
-                            error!("could not write to tcp endpoint {:?}", err);
-                            break;
-                        }
-                    },
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(e) => {
-                        error!("could not read from tcp endpoint {:?}", e);
-                        break;
-                    }
-                }
-
-               },
-               _ = sleep(Duration::from_millis(5000)) => {
+                a = Self::read_and_write(&self.cl_stream, &self.s_stream, &mut bufi) => if let Ok(_) = a { continue; } else { break; },
+                b = Self::read_and_write(&self.s_stream, &self.cl_stream, &mut bufo) => if let Ok(_) = b { continue; } else { break; },
+                _ = sleep(Duration::from_millis(5000)) => {
                     info!("ProxyClient: No traffic for {:?} exiting", self.endpoint);
                     break;
-               }
+                }
             }
         }
         if let Err(err) = self

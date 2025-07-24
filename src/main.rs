@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rrr_proxy::{AllocatorService, ProxyManager, proxy::ProxyManagerShared};
+use rrr_proxy::{AllocatorService, ProxyManager};
 use tokio::sync::RwLock;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
