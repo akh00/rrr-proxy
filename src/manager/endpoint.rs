@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, post},
+    serve::Serve,
 };
 use std::{borrow::Cow, sync::Arc, time::Duration};
 use tower::{BoxError, ServiceBuilder};
@@ -37,11 +38,14 @@ impl AllocatorService {
         AllocatorService { app }
     }
 
-    pub async fn start(&mut self, port: u16) {
+    pub async fn start(&mut self, port: u16) -> Result<(), &'static str> {
         let listener = tokio::net::TcpListener::bind("0.0.0.0:".to_owned() + &port.to_string())
             .await
             .unwrap();
-        axum::serve(listener, self.app.clone()).await.unwrap();
+        match axum::serve(listener, self.app.clone()).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err("error happened"),
+        }
     }
 }
 

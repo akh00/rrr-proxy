@@ -29,4 +29,4 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter", "tracing-lo
 tracing = "0.1.41"
 log = "0.4.27"
 tracing-test = "0.2.5"
-sysinfo = "0.35.2"
+sysinfo = "0.36.1"

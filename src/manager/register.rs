@@ -1,17 +1,24 @@
+use std::error::Error;
+
 use futures::{channel::mpsc, future::select, pin_mut};
 use log::debug;
+use tokio::task::{JoinError, JoinHandle};
 use tokio_tungstenite::connect_async;
 use tungstenite::Message;
 
-pub struct ManagerClient {
+use crate::manager::FixBoxError;
+use crate::manager::load::ReportLoadT;
+
+struct RegisterClient {
     url: String,
     timeout: u64,
 }
 
-impl ManagerClient {
+impl RegisterClient {
     fn new(url: String) -> Self {
-        ManagerClient { url, timeout: 5000 }
+        RegisterClient { url, timeout: 5000 }
     }
+
     async fn connect(self, receiver: mpsc::UnboundedReceiver<Message>) -> () {
         use futures::stream::StreamExt;
         match connect_async(&self.url).await {
@@ -35,5 +42,27 @@ impl ManagerClient {
     }
     fn register(&mut self) -> Result<(), u16> {
         Ok(())
+    }
+}
+
+pub struct RegisterAgent {
+    client: RegisterClient,
+    load_reporer: Box<dyn ReportLoadT>,
+}
+
+impl RegisterAgent {
+    pub fn new(url: String, timeout: u64, load: Box<dyn ReportLoadT>) -> Self {
+        RegisterAgent {
+            client: RegisterClient { url, timeout },
+            load_reporer: load,
+        }
+    }
+
+    pub async fn run(mut self) -> Result<(), &'static str> {
+        let handle = tokio::spawn(async move { () });
+        match handle.await {
+            Ok(_) => Ok(()),
+            Err(err) => Err("error happened"),
+        }
     }
 }
