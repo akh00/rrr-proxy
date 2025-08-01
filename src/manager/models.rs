@@ -16,3 +16,9 @@ pub struct AllocateResponse {
     pub proxy_ssl_tcp_port: u16,
     pub load_percentage: u16,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadReport {
+    pub percent: u32,
+}

@@ -19,8 +19,13 @@ mod integration_tests {
     use log::info;
     use serde_json::json;
     use tokio::sync::RwLock;
+    use tungstenite::Message;
+    use ws_mock::matchers::Any;
+    use ws_mock::ws_mock_server::{WsMock, WsMockServer};
 
+    use crate::manager::load::ReportLoadSysProvider;
     use crate::manager::models::AllocateResponse;
+    use crate::manager::register::RegisterAgent;
     use crate::{AllocatorService, ProxyManager};
 
     fn init() {
@@ -216,6 +221,21 @@ mod integration_tests {
     async fn it_should_pass() {
         init();
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
+        let load_reporter = Arc::new(RwLock::<ReportLoadSysProvider>::new(
+            ReportLoadSysProvider::new(),
+        ));
+
+        let server = WsMockServer::start().await;
+
+        WsMock::new()
+            .matcher(Any::new())
+            .respond_with(Message::Text("Hello World".into()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let register_agent =
+            RegisterAgent::new("http://localhost:5555".to_string(), 500, load_reporter);
 
         let manager_app = AllocatorService::new(Arc::clone(&proxy_manager));
         let server = TestServer::new(manager_app.app).expect("Should create test server");

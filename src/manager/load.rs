@@ -2,7 +2,7 @@ use std::error::Error;
 
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 pub struct ReportLoad {
-    percent: f32,
+    pub percent: u32,
 }
 
 pub trait ReportLoadT {
@@ -25,7 +25,7 @@ impl ReportLoadT for ReportLoadSysProvider {
     fn get_load(&mut self) -> Result<ReportLoad, Box<dyn Error + Send + Sync>> {
         self.system.refresh_cpu_usage();
         Ok(ReportLoad {
-            percent: self.system.global_cpu_usage(),
+            percent: self.system.global_cpu_usage() as u32,
         })
     }
 }
