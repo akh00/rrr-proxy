@@ -16,17 +16,29 @@ mod integration_tests {
     use axum::http::StatusCode;
     use axum_test::{TestResponse, TestServer};
     use futures::future::join_all;
+    use futures::{FutureExt, TryFutureExt, join};
     use log::info;
+    use once_cell::sync::OnceCell;
     use serde_json::json;
     use tokio::sync::RwLock;
+    use tokio::task::JoinSet;
     use tungstenite::Message;
-    use ws_mock::matchers::Any;
+    use ws_mock::matchers::{Any, StringContains};
     use ws_mock::ws_mock_server::{WsMock, WsMockServer};
 
     use crate::manager::load::ReportLoadSysProvider;
     use crate::manager::models::AllocateResponse;
     use crate::manager::register::RegisterAgent;
     use crate::{AllocatorService, ProxyManager};
+
+    static MOCK_SERVER_REF: OnceCell<WsMockServer> = OnceCell::new();
+
+    async fn async_init() {
+        if let None = MOCK_SERVER_REF.get() {
+            let server = WsMockServer::start().await;
+            MOCK_SERVER_REF.set(server);
+        }
+    }
 
     fn init() {
         let _ = env_logger::builder()
@@ -150,7 +162,7 @@ mod integration_tests {
         resp: &TestResponse,
     ) -> (UdpSocket, UdpSocket, AllocateResponse) {
         let parsed: AllocateResponse =
-            serde_json::from_str(&resp.text()).expect("AllocateResponse shouldbe parsed");
+            serde_json::from_str(&resp.text()).expect("AllocateResponse should be parsed");
         let local_port = parsed.proxy_udp_port;
         let client_udp_socket =
             UdpSocket::bind("0.0.0.0:0").expect("should be able to bind udp socket");
@@ -218,24 +230,33 @@ mod integration_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn reporting_shold_work() {
+        init();
+        async_init().await;
+        let load_reporter = Arc::new(ReportLoadSysProvider::new());
+
+        let register_agent = RegisterAgent::new(
+            format!(
+                "ws://{}",
+                MOCK_SERVER_REF.get().unwrap().get_connection_string().await
+            ),
+            500,
+            load_reporter,
+        );
+        let mock = WsMock::new()
+            .matcher(StringContains::new("percent:"))
+            .respond_with(Message::Text("Hello World".into()))
+            .expect(1)
+            .mount(&MOCK_SERVER_REF.get().unwrap());
+
+        tokio::join!(tokio::spawn(mock), tokio::spawn(register_agent.run()),);
+        MOCK_SERVER_REF.get().unwrap().verify();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn it_should_pass() {
         init();
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
-        let load_reporter = Arc::new(RwLock::<ReportLoadSysProvider>::new(
-            ReportLoadSysProvider::new(),
-        ));
-
-        let server = WsMockServer::start().await;
-
-        WsMock::new()
-            .matcher(Any::new())
-            .respond_with(Message::Text("Hello World".into()))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let register_agent =
-            RegisterAgent::new("http://localhost:5555".to_string(), 500, load_reporter);
 
         let manager_app = AllocatorService::new(Arc::clone(&proxy_manager));
         let server = TestServer::new(manager_app.app).expect("Should create test server");

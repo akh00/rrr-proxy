@@ -1,9 +1,8 @@
-use std::error::Error;
+use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::SinkExt;
-use futures::channel::mpsc::UnboundedSender;
 use futures::{channel::mpsc, future::select, pin_mut};
 use log::debug;
 use tokio::sync::RwLock;
@@ -54,15 +53,11 @@ impl RegisterClient {
 pub struct RegisterAgent {
     url: String,
     timeout: u64,
-    load_reporter: Arc<RwLock<dyn ReportLoadT + Send + Sync>>,
+    load_reporter: Arc<dyn ReportLoadT + Send + Sync>,
 }
 
 impl RegisterAgent {
-    pub fn new(
-        url: String,
-        timeout: u64,
-        load: Arc<RwLock<dyn ReportLoadT + Send + Sync>>,
-    ) -> Self {
+    pub fn new(url: String, timeout: u64, load: Arc<dyn ReportLoadT + Send + Sync>) -> Self {
         RegisterAgent {
             url: url,
             timeout: timeout,
@@ -70,7 +65,7 @@ impl RegisterAgent {
         }
     }
 
-    pub async fn run(self) -> Result<(), String> {
+    pub async fn run(mut self) -> Result<(), String> {
         let (mut tx, mut rx) = futures_channel::mpsc::unbounded();
         let handle = tokio::spawn(async move {
             let client = RegisterClient::new(self.url, self.timeout);
@@ -79,8 +74,8 @@ impl RegisterAgent {
                     _ = client.connect(&mut rx) => {
                         break;
                     },
-                    _  = sleep(Duration::from_millis(1000)) => {
-                        if let Ok(load) = self.load_reporter.blocking_write().get_load() {
+                    _  = sleep(Duration::from_millis(5000)) => {
+                        if let Ok(load) = Arc::get_mut(&mut self.load_reporter).unwrap().get_load() {
                             let str_load  = serde_json::to_string(&LoadReport{ percent: load.percent }).ok().unwrap();
                             if let Err(_) = tx.send(Message::Text(Utf8Bytes::from(str_load))).await { break }
                          else {
