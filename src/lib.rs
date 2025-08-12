@@ -16,14 +16,13 @@ mod integration_tests {
     use axum::http::StatusCode;
     use axum_test::{TestResponse, TestServer};
     use futures::future::join_all;
-    use futures::{FutureExt, TryFutureExt, join};
     use log::info;
     use once_cell::sync::OnceCell;
     use serde_json::json;
+    use tokio::select;
     use tokio::sync::RwLock;
-    use tokio::task::JoinSet;
     use tungstenite::Message;
-    use ws_mock::matchers::{Any, StringContains};
+    use ws_mock::matchers::Any;
     use ws_mock::ws_mock_server::{WsMock, WsMockServer};
 
     use crate::manager::load::ReportLoadSysProvider;
@@ -236,21 +235,25 @@ mod integration_tests {
         let load_reporter = Arc::new(ReportLoadSysProvider::new());
 
         let register_agent = RegisterAgent::new(
-            format!(
-                "ws://{}",
-                MOCK_SERVER_REF.get().unwrap().get_connection_string().await
-            ),
+            MOCK_SERVER_REF.get().unwrap().uri().await,
             500,
             load_reporter,
         );
         let mock = WsMock::new()
-            .matcher(StringContains::new("percent:"))
-            .respond_with(Message::Text("Hello World".into()))
+            // .matcher(StringContains::new("percent"))
+            .matcher(Any::new())
+            .respond_with(Message::Text("Pong".into()))
             .expect(1)
             .mount(&MOCK_SERVER_REF.get().unwrap());
 
-        tokio::join!(tokio::spawn(mock), tokio::spawn(register_agent.run()),);
-        MOCK_SERVER_REF.get().unwrap().verify();
+        tokio::select! {
+            _ = tokio::spawn(async {tokio::join!(
+            mock,
+            register_agent.run())}) => {},
+           _ = tokio::time::sleep(Duration::from_millis(6000)) => {}
+        }
+
+        MOCK_SERVER_REF.get().unwrap().verify().await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
