@@ -1,4 +1,10 @@
-use std::{collections::HashMap, error::Error, fmt::Debug, net::SocketAddr, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fmt::Debug,
+    net::{SocketAddr, ToSocketAddrs},
+    time::Duration,
+};
 
 use tokio::{
     io,
@@ -9,6 +15,8 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, instrument};
+
+use crate::consts;
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
 
@@ -28,7 +36,15 @@ impl ProxyTcpClient {
         endpoint: Endpoint,
         msg_tx: Sender<ProxyClientMsg>,
     ) -> Result<Self, Box<dyn Error>> {
-        let s_stream = TcpStream::connect(endpoint.to_string()).await?;
+        // just in case resolving
+        let remote_adr = endpoint
+            .to_string()
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .ok_or("Something went wrong")
+            .unwrap();
+        let s_stream = TcpStream::connect(remote_adr).await?;
         Ok(ProxyTcpClient {
             cl_stream: stream,
             s_stream,
@@ -61,6 +77,7 @@ impl ProxyTcpClient {
 
     #[inline]
     async fn write_to_stream(tcp_stream: &TcpStream, buf: &[u8]) -> Result<(), Box<dyn Error>> {
+        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         loop {
             select! {
                 _ = tcp_stream.writable() => {
@@ -70,7 +87,7 @@ impl ProxyTcpClient {
                     }
 
                 },
-                _ = sleep(Duration::from_millis(1000)) => {
+                _ = sleep(Duration::from_millis(timeout)) => {
                     return Err(Box::<dyn Error>::from(
                         "Can not write to tcp stream, timeout",
                     ))
@@ -84,12 +101,13 @@ impl ProxyTcpClient {
     pub async fn run(self) {
         let mut bufi = [0; 64 * 1024];
         let mut bufo = [0; 64 * 1024];
+        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         loop {
             select! {
                 a = Self::read_and_write(&self.cl_stream, &self.s_stream, &mut bufi) => if let Ok(_) = a { continue; } else { break; },
                 b = Self::read_and_write(&self.s_stream, &self.cl_stream, &mut bufo) => if let Ok(_) = b { continue; } else { break; },
-                _ = sleep(Duration::from_millis(5000)) => {
-                    info!("ProxyClient: No traffic for {:?} exiting", self.endpoint);
+                _ = sleep(Duration::from_millis(timeout)) => {
+                    info!("ProxyClient: No traffic for {:?} exiting", &self.endpoint);
                     break;
                 }
             }
@@ -157,6 +175,7 @@ impl ProxyTcpEndpoint {
         }
     }
     async fn run(mut self) {
+        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let (msg_tx, mut rx) = mpsc::channel::<ProxyClientMsg>(1000);
         loop {
             select! {
@@ -179,7 +198,7 @@ impl ProxyTcpEndpoint {
                             ProxyClientMsg::ClientEnded { addr } => {
                                 self.clients.remove(&addr); //removing one of the accepted tcp connections
                                 if self.clients.len() == 0 {
-                                    info!("No clients left for the given endpoint {:?}", self.endpoint);
+                                    info!("No clients left for the given endpoint {:?}", &self.endpoint);
                                     break;
                                 }
                             }
@@ -189,8 +208,8 @@ impl ProxyTcpEndpoint {
                         break;
                     }
                },
-               _ = sleep(Duration::from_millis(5000)) => {
-                    info!("No traffic on ProxyEndpoint {:?}, exiting", self.endpoint);
+               _ = sleep(Duration::from_millis(timeout)) => {
+                    info!("No traffic on ProxyEndpoint {:?}, exiting", &self.endpoint);
                     break;
                }
             };

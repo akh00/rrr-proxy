@@ -1,9 +1,9 @@
-use std::sync::Arc;
-
+use rrr_proxy::consts;
 use rrr_proxy::{
     AllocatorService, ProxyManager, manager::load::ReportLoadSysProvider,
     manager::register::RegisterAgent,
 };
+use std::sync::Arc;
 use tokio::{sync::RwLock, try_join};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -13,7 +13,7 @@ async fn main() {
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
             format!(
-                "{}=debug,tower_http=debug,tokio=debug",
+                "{}=debug,tower_http=debug,tokio=debug,axum=debug",
                 env!("CARGO_CRATE_NAME")
             )
             .into()
@@ -23,7 +23,8 @@ async fn main() {
     let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
     let load_reporter = Arc::new(ReportLoadSysProvider::new());
-    let register_agent = RegisterAgent::new("ws://localhost:5555".to_string(), 500, load_reporter);
+    let register_agent =
+        RegisterAgent::new((*consts::REGISTER_ENDPOINT).to_string(), load_reporter);
     let mut proxy_app = AllocatorService::new(Arc::clone(&proxy_manager));
-    try_join!(proxy_app.start(3333), register_agent.run());
+    let _ = try_join!(proxy_app.start(3333), register_agent.run());
 }

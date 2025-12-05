@@ -5,6 +5,45 @@ pub mod proxy;
 pub use manager::endpoint::*;
 pub use proxy::*;
 
+pub mod consts {
+    use std::env::var;
+    use std::sync::LazyLock;
+
+    use uuid::Uuid;
+
+    pub static REGISTER_ENDPOINT: LazyLock<String> =
+        LazyLock::new(|| match var("REGISTER_ENDPOINT") {
+            Ok(reg_endpoint) => reg_endpoint,
+            Err(_) => "ws://localhost:5555".to_string(),
+        });
+    pub static TRAFFIC_WAIT_TIMEOUT: LazyLock<u64> =
+        LazyLock::new(|| match var("TRAFFIC_WAIT_TIMEOUT") {
+            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap(),
+            Err(_) => 5000, // default
+        });
+    pub static PUBLIC_IPV4: LazyLock<String> = LazyLock::new(|| match var("PUBLIC_IPV4") {
+        Ok(ipv4) => ipv4,
+        Err(_) => "127.0.0.1".to_string(), // default
+    });
+    pub static PUBLIC_IPV6: LazyLock<String> = LazyLock::new(|| match var("PUBLIC_IPV6") {
+        Ok(ipv6) => ipv6,
+        Err(_) => "::1".to_string(), // default
+    });
+    pub static PRIVATE_IP: LazyLock<String> = LazyLock::new(|| match var("PRIVATE_IP") {
+        Ok(ip) => ip,
+        Err(_) => "192.168.49.1:3333".to_string(), // default
+    });
+    pub static AVAILABILITY_ZONE: LazyLock<String> =
+        LazyLock::new(|| match var("AVAILABILITY_ZONE") {
+            Ok(az) => az,
+            Err(_) => "a".to_string(), // default
+        });
+    pub static PROXY_GUID: LazyLock<String> = LazyLock::new(|| match var("PROXY_GUID") {
+        Ok(guid) => guid,
+        Err(_) => Uuid::new_v4().to_string(), // default
+    });
+}
+
 #[cfg(test)]
 mod integration_tests {
     use std::io::{Read, Write};
@@ -19,7 +58,6 @@ mod integration_tests {
     use log::info;
     use once_cell::sync::OnceCell;
     use serde_json::json;
-    use tokio::select;
     use tokio::sync::RwLock;
     use tungstenite::Message;
     use ws_mock::matchers::Any;
@@ -32,11 +70,12 @@ mod integration_tests {
 
     static MOCK_SERVER_REF: OnceCell<WsMockServer> = OnceCell::new();
 
-    async fn async_init() {
+    async fn async_init() -> &'static WsMockServer {
         if let None = MOCK_SERVER_REF.get() {
             let server = WsMockServer::start().await;
-            MOCK_SERVER_REF.set(server);
+            let _ = MOCK_SERVER_REF.set(server);
         }
+        MOCK_SERVER_REF.get().unwrap()
     }
 
     fn init() {
@@ -231,20 +270,15 @@ mod integration_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn reporting_shold_work() {
         init();
-        async_init().await;
+        let mock_server = async_init().await;
         let load_reporter = Arc::new(ReportLoadSysProvider::new());
-
-        let register_agent = RegisterAgent::new(
-            MOCK_SERVER_REF.get().unwrap().uri().await,
-            500,
-            load_reporter,
-        );
+        let register_agent = RegisterAgent::new(mock_server.uri().await, load_reporter);
         let mock = WsMock::new()
             // .matcher(StringContains::new("percent"))
             .matcher(Any::new())
             .respond_with(Message::Text("Pong".into()))
-            .expect(1)
-            .mount(&MOCK_SERVER_REF.get().unwrap());
+            .expect(2)
+            .mount(mock_server);
 
         tokio::select! {
             _ = tokio::spawn(async {tokio::join!(
@@ -292,12 +326,13 @@ mod integration_tests {
         }
 
         let resp = server
-            .post(&"/api/v1/allocate")
+            .post(&"/api/v1/proxy-ports")
             .add_header("content-type", "application/json")
             .json(&json!(
                {
                 "targetIp": "127.0.0.1",
-                "targetUdpPort" : upd_port, "targetTcpPort": tcp_port, "targetSslTcpPort": 23456
+                "targetUdpPort" : upd_port.to_string(), "targetTcpPort": tcp_port.to_string(), "targetSslTcpPort": 23456.to_string(),
+                "privateIp": "127.0.0.1", "sessionId": "deadbeaf"
                }
             ))
             .await;
@@ -335,7 +370,7 @@ mod integration_tests {
 
         let resp = server
             .delete(&format!(
-                "/api/v1/delete/udp/{}",
+                "/api/v1/proxy-ports/{}/sesionid",
                 allocate_resp.proxy_udp_port
             ))
             .await;
@@ -343,7 +378,7 @@ mod integration_tests {
         info!("deleted udp endpoint");
         let resp = server
             .delete(&format!(
-                "/api/v1/delete/tcp/{}",
+                "/api/v1/proxy-ports/{}/sessionid",
                 allocate_resp.proxy_tcp_port
             ))
             .await;
@@ -375,12 +410,13 @@ mod integration_tests {
         }
 
         let resp = server
-            .post(&"/api/v1/allocate")
+            .post(&"/api/v1/proxy-ports")
             .add_header("content-type", "application/json")
             .json(&json!(
                {
                 "targetIp": "127.0.0.1",
-                "targetUdpPort" : upd_port, "targetTcpPort": 23456, "targetSslTcpPort": 23456
+                "targetUdpPort" : upd_port.to_string(), "targetTcpPort": 2345.to_string(), "targetSslTcpPort": 23456.to_string(),
+                "privateIp": "127.0.0.1", "sessionId": "deadbeaf"
                }
             ))
             .await;
@@ -402,7 +438,7 @@ mod integration_tests {
         });
         let resp = server
             .delete(&format!(
-                "/api/v1/delete/udp/{}",
+                "/api/v1/proxy-ports/{}/sessionid",
                 allocate_resp.proxy_udp_port
             ))
             .await;

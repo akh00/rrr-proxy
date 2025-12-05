@@ -1,5 +1,9 @@
-use core::str;
-use std::{collections::HashMap, error::Error, net::SocketAddr, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    net::{SocketAddr, ToSocketAddrs},
+    time::Duration,
+};
 use tokio::{
     net::UdpSocket,
     select,
@@ -7,11 +11,11 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
-use tracing::{debug, error, info, instrument};
-
-use crate::FixBoxError;
+use tracing::{debug, error, info, instrument, trace};
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
+use crate::FixBoxError;
+use crate::consts;
 //
 //  agent pattern implementation
 //
@@ -45,24 +49,25 @@ impl ProxyEndpoint {
         }
     }
     async fn run(mut self) {
+        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let mut buf = [0; 64 * 1024];
         loop {
             select! {
                 a = self.udp_socket.recv_from(&mut buf) => {
                    if let Ok((len, addr )) = a {
-                    debug!("{:?} bytes received from {:?}", len, addr);
+                    trace!("{:?} bytes received from {:?}", len, addr);
                     // to the router
                         match self.tx.send((buf[..len].to_vec(), addr)).await {
                             Ok(_) => {
-                                debug!("Sent back to router with addr:{}", addr);
+                                trace!("Sent back to router with addr:{}", addr);
                             }
                             Err(error) => {
-                                debug!("Error sending to ruter: {}", error);
+                                error!("Error sending to ruter: {:?}", error);
                                 break;
                             }
                         };
                     } else {
-                        debug!("Error recieven from socket");
+                        error!("Error recieven from socket");
                         break;
                     }
                },
@@ -70,21 +75,21 @@ impl ProxyEndpoint {
                    if let Some((res_buf, addr)) = b {
                         match self.udp_socket.send_to(res_buf.as_slice(), addr).await {
                             Ok(_) => {
-                                    debug!("Sent back to client {:?} buf:{:?}", addr, str::from_utf8(res_buf.as_slice()).unwrap());
+                                    trace!("Sent back to client {:?} buf:{:?}", addr, "somebuffer");
                             },
                             Err(error) => {
-                                    debug!("Error happened local recieve {:?} ", error);
+                                    error!("Error happened local recieve {:?} ", error);
                                     break;
                             }
                         }
                     } else {
-                        debug!("Error happened local recieve");
+                        error!("Error happened local recieve");
                         break;
 
                     }
                },
-               _ = sleep(Duration::from_millis(5000)) => {
-                    info!("No traffic on ProxyEndpoint {:?}, exiting", self.endpoint);
+               _ = sleep(Duration::from_millis(timeout)) => {
+                    info!("No traffic on ProxyEndpoint {:?}, exiting", &self.endpoint);
                     break;
                }
             }
@@ -136,7 +141,7 @@ impl ProxyRouterClient {
         addr: &SocketAddr,
         sender: Sender<ProxyClientMsg>,
     ) -> Result<&ProxyClientHandler, Box<dyn Error>> {
-        if !self.clients.contains_key(addr) {
+        if !self.clients.contains_key(&addr) {
             if let Ok(client) =
                 ProxyClientHandler::new(self.endpoint.clone(), *addr, self.tx.clone(), sender).await
             {
@@ -153,10 +158,11 @@ impl ProxyRouterClient {
                 )));
             }
         }
-        Ok(self.clients.get(addr).unwrap())
+        Ok(self.clients.get(&addr).unwrap())
     }
 
     async fn run(mut self) {
+        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let (tx, mut client_rx) = mpsc::channel::<ProxyClientMsg>(10);
         loop {
             select! {
@@ -170,8 +176,11 @@ impl ProxyRouterClient {
                                     break;
                                 }
                                 continue;
+                            }
+                        } else {
+                            error!("Can not get or create client for {:?}", &addr);
+                            break;
                         }
-                    }
                     } else  {
                         info!("No channel any more finishing ProxyRouterClient");
                         break;
@@ -190,8 +199,8 @@ impl ProxyRouterClient {
                         None => break,
                     }
                 },
-                _ = sleep(Duration::from_millis(5000)) => {
-                    info!("ProxyRouterClient: No traffic for {:?} exiting", self.endpoint);
+                _ = sleep(Duration::from_millis(timeout)) => {
+                    info!("ProxyRouterClient: No traffic for {:?} exiting", &self.endpoint);
                     break;
                }
             }
@@ -226,6 +235,8 @@ impl ProxyEndpointHandler {
     ) -> Result<Self, Box<dyn Error>> {
         let local_socket = UdpSocket::bind("0.0.0.0:0").await?;
         let port: u16 = local_socket.local_addr()?.port();
+
+        debug!("udp port allocated {:?}", port);
         let (tx, rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1000);
         let (router_tx, router_rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1000);
 
@@ -285,18 +296,19 @@ impl ProxyClient {
 
     #[instrument(level = "debug")]
     async fn run(mut self) {
+        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let mut buf = [0; 64 * 1024];
         loop {
             select! {
                 a = self.udp_socket.recv(&mut buf) => {
                     if let Ok(len) = a {
-                        debug!("{:?} bytes received from {:?}", len, self.addr);
+                        trace!("{:?} bytes received from {:?}", len, self.addr);
                         if let Err(error) = self.tx.send((buf[..len].to_vec(), self.addr)).await {
                             error!("Error happened router send {:?} ", error);
                             break;
                         }
                     } else {
-                        debug!("ProxyClient: Error sending to socket, existing");
+                        error!("ProxyClient: Error sending to socket, existing");
                         break;
                     }
                },
@@ -304,7 +316,7 @@ impl ProxyClient {
                 if let Some(res_buf) = b {
                    match self.udp_socket.send(res_buf.as_slice()).await {
                        Ok(_) => {
-                            debug!("Sent to ms {:?}", str::from_utf8(res_buf.as_slice()).unwrap());
+                            trace!("Sent buffer to server");
                             continue;
                         },
                         Err(error) => {
@@ -313,12 +325,12 @@ impl ProxyClient {
                         }
                     }
                 } else {
-                    debug!("ProxyClient: Error recieving from channel , existing");
+                    info!("ProxyClient: Channel is closed for {:?}, exiting", &self.addr);
                     break;
                 }
                },
-               _ = sleep(Duration::from_millis(5000)) => {
-                    info!("ProxyClient: No traffic for {:?} exiting", self.addr);
+               _ = sleep(Duration::from_millis(timeout)) => {
+                    info!("ProxyClient: No traffic for {:?} exiting", &self.addr);
                     break;
                }
             }
@@ -349,12 +361,23 @@ impl ProxyClientHandler {
         server_sender: Sender<(Vec<u8>, SocketAddr)>,
         msg_sender: Sender<ProxyClientMsg>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let remote_addr = SocketAddr::from_str(endpoint.to_string().as_str())?;
+        let remote_addr = endpoint
+            .to_string()
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .ok_or("Something went wrong")
+            .unwrap();
 
         let (tx, rx) = mpsc::channel::<Vec<u8>>(1000);
         let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
         let _ = match udp_socket.connect(remote_addr).await {
             Ok(_) => {
+                debug!(
+                    //it cause tests to fail not sure why
+                    "connected to remote addr {:?} for {:?} ",
+                    &remote_addr, &client_addr
+                );
                 let client =
                     ProxyClient::new(udp_socket, server_sender, rx, client_addr, msg_sender);
                 tokio::spawn(async move {
@@ -362,7 +385,7 @@ impl ProxyClientHandler {
                 })
             }
             Err(error) => {
-                println!("Error happened rm_socket_error {:?} ", error);
+                error!(error = ?error,  "Error happened rm_socket_error");
                 return Err("Something went wrong".to_string().into());
             }
         };
