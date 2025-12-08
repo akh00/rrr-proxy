@@ -23,7 +23,7 @@ async fn main() {
     let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
     let load_reporter = Arc::new(ReportLoadSysProvider::new());
-    let register_agent =
+    let mut register_agent =
         RegisterAgent::new((*consts::REGISTER_ENDPOINT).to_string(), load_reporter);
     let mut proxy_app = AllocatorService::new(Arc::clone(&proxy_manager));
     let _ = try_join!(proxy_app.start(3333), register_agent.run());

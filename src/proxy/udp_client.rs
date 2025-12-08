@@ -302,7 +302,7 @@ impl ProxyClient {
             select! {
                 a = self.udp_socket.recv(&mut buf) => {
                     if let Ok(len) = a {
-                        trace!("{:?} bytes received from {:?}", len, self.addr);
+                        trace!("{:?} bytes received from {:?}", len, &self.addr);
                         if let Err(error) = self.tx.send((buf[..len].to_vec(), self.addr)).await {
                             error!("Error happened router send {:?} ", error);
                             break;

@@ -42,6 +42,15 @@ pub mod consts {
         Ok(guid) => guid,
         Err(_) => Uuid::new_v4().to_string(), // default
     });
+    pub static HEARTBIT_DELAY: LazyLock<u64> = LazyLock::new(|| match var("HEARTBIT_DELAY") {
+        Ok(delay) => delay.parse::<u64>().unwrap_or_else(|_| 10000),
+        Err(_) => 10000, // default
+    });
+    pub static MAX_REGISTRATION_ATTEMPTS: LazyLock<u16> =
+        LazyLock::new(|| match var("MAX_REGISTRATION_ATTEMPTS") {
+            Ok(attempts) => attempts.parse::<u16>().unwrap_or_else(|_| 10),
+            Err(_) => 10, // default
+        });
 }
 
 #[cfg(test)]
@@ -272,7 +281,7 @@ mod integration_tests {
         init();
         let mock_server = async_init().await;
         let load_reporter = Arc::new(ReportLoadSysProvider::new());
-        let register_agent = RegisterAgent::new(mock_server.uri().await, load_reporter);
+        let mut register_agent = RegisterAgent::new(mock_server.uri().await, load_reporter);
         let mock = WsMock::new()
             // .matcher(StringContains::new("percent"))
             .matcher(Any::new())
@@ -281,10 +290,10 @@ mod integration_tests {
             .mount(mock_server);
 
         tokio::select! {
-            _ = tokio::spawn(async {tokio::join!(
+            _ = tokio::spawn(async move {tokio::join!(
             mock,
             register_agent.run())}) => {},
-           _ = tokio::time::sleep(Duration::from_millis(6000)) => {}
+           _ = tokio::time::sleep(Duration::from_millis(12000)) => {}
         }
 
         MOCK_SERVER_REF.get().unwrap().verify().await

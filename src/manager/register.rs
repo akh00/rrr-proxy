@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::trace;
+use tracing::{info, trace};
 
 use futures::SinkExt;
 use futures::{channel::mpsc, future::select, pin_mut};
@@ -35,6 +35,7 @@ impl RegisterClient {
                 let (mut write, read) = ws_stream.split();
                 let str_load = serde_json::to_string(&self.data)?;
                 write.send(Message::from(str_load)).await?;
+                info!("Registered to {:?}", &self.url.clone());
                 let mpsc_to_ws = receiver.map(Message::from).map(Ok).forward(write);
                 let ws_to_mpsc = {
                     read.for_each(|message| async {
@@ -68,12 +69,13 @@ impl RegisterAgent {
     }
 
     pub async fn heartbeat(
-        mut self,
+        &mut self,
         mut tx: UnboundedSender<Message>,
     ) -> Result<(), anyhow::Error> {
+        let delay = *consts::HEARTBIT_DELAY;
         loop {
             tokio::select!(
-                _  = sleep(Duration::from_millis(5000)) => {
+                _  = sleep(Duration::from_millis(delay)) => {
                     if let Ok(load) = Arc::get_mut(&mut self.load_reporter).unwrap().get_load() {
                         let str_load  = serde_json::to_string(&LoadReport{ _type: "load", load: load.percent })?;
                         trace!("Sending report:{}", str_load);
@@ -91,7 +93,7 @@ impl RegisterAgent {
         }
     }
 
-    pub async fn run(self) -> Result<(), anyhow::Error> {
+    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let (tx, mut rx) = futures_channel::mpsc::unbounded();
         let client = RegisterClient::new(
             self.url.clone(),
@@ -104,10 +106,28 @@ impl RegisterAgent {
                 az: (*consts::AVAILABILITY_ZONE).to_string(),
             },
         );
-        if let Ok(_) = tokio::try_join!(client.connect(&mut rx), self.heartbeat(tx)) {
-            Ok(())
-        } else {
-            Err(anyhow!("error during registration happened"))
+        let max_attempt = *consts::MAX_REGISTRATION_ATTEMPTS;
+        let mut cur_attempt = 0;
+        let delay = *consts::HEARTBIT_DELAY;
+
+        loop {
+            match tokio::try_join!(client.connect(&mut rx), self.heartbeat(tx.clone())) {
+                Ok(_) => {
+                    return Ok(());
+                }
+                Err(err) => {
+                    cur_attempt += 1;
+                    if cur_attempt > max_attempt {
+                        return Err(anyhow!("error during registration happened"));
+                    } else {
+                        info!(
+                            "Proxy registration failed: {:?}, sleeping  for {:?}",
+                            err, delay
+                        );
+                        sleep(Duration::from_millis(delay)).await;
+                    }
+                }
+            }
         }
     }
 }
