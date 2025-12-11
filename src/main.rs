@@ -1,9 +1,9 @@
 use rrr_proxy::consts;
 use rrr_proxy::manager::pmetrics;
-use rrr_proxy::{
-    AllocatorService, ProxyManager, manager::load::ReportLoadSysProvider,
-    manager::register::RegisterAgent,
+use rrr_proxy::manager::{
+    endpoint::AllocatorService, load::ReportLoadSysProvider, register::RegisterAgent,
 };
+use rrr_proxy::proxy::ProxyManager;
 use std::sync::Arc;
 use tokio::{sync::RwLock, try_join};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};

@@ -14,7 +14,7 @@ use tokio::{
 use tracing::{debug, error, info, instrument, trace};
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
-use crate::{FixBoxError, manager::pmetrics};
+use crate::manager::{FixBoxError, pmetrics};
 use crate::{consts, manager::pmetrics::globals};
 //
 //  agent pattern implementation
