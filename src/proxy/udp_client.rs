@@ -14,8 +14,8 @@ use tokio::{
 use tracing::{debug, error, info, instrument, trace};
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
-use crate::FixBoxError;
-use crate::consts;
+use crate::{FixBoxError, manager::pmetrics};
+use crate::{consts, manager::pmetrics::globals};
 //
 //  agent pattern implementation
 //
@@ -40,6 +40,7 @@ impl ProxyEndpoint {
         msg_tx: Sender<ProxyManagerMsg>,
         endpoint: Endpoint,
     ) -> Self {
+        (*pmetrics::globals::IN_UDP_SOCKET_COUNTER).increment(1);
         ProxyEndpoint {
             udp_socket,
             rx,
@@ -247,6 +248,7 @@ impl ProxyEndpointHandler {
             msg_tx.clone(),
             endpoint.clone(),
         );
+
         let handle = tokio::spawn(async move {
             pr_endpoint.run().await;
         });
@@ -285,6 +287,7 @@ impl ProxyClient {
         addr: SocketAddr,
         msg_tx: Sender<ProxyClientMsg>,
     ) -> Self {
+        (*globals::OUT_UDP_SOCKET_COUNTER).increment(1);
         ProxyClient {
             udp_socket,
             tx,

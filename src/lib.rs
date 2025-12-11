@@ -8,7 +8,6 @@ pub use proxy::*;
 pub mod consts {
     use std::env::var;
     use std::sync::LazyLock;
-
     use uuid::Uuid;
 
     pub static REGISTER_ENDPOINT: LazyLock<String> =
@@ -20,6 +19,16 @@ pub mod consts {
         LazyLock::new(|| match var("TRAFFIC_WAIT_TIMEOUT") {
             Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap(),
             Err(_) => 5000, // default
+        });
+    pub static HTTP_REQUEST_TIMEOUT: LazyLock<u64> =
+        LazyLock::new(|| match var("HTTP_REQUEST_TIMEOUT") {
+            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap(),
+            Err(_) => 1000, // default
+        });
+    pub static HTTP_REQUEST_CONCURRENT_NUM: LazyLock<usize> =
+        LazyLock::new(|| match var("HTTP_REQUEST_CONCURRENT_NUM") {
+            Ok(concurrent_num) => concurrent_num.parse::<usize>().unwrap(),
+            Err(_) => 128, // default
         });
     pub static PUBLIC_IPV4: LazyLock<String> = LazyLock::new(|| match var("PUBLIC_IPV4") {
         Ok(ipv4) => ipv4,
@@ -48,9 +57,22 @@ pub mod consts {
     });
     pub static MAX_REGISTRATION_ATTEMPTS: LazyLock<u16> =
         LazyLock::new(|| match var("MAX_REGISTRATION_ATTEMPTS") {
-            Ok(attempts) => attempts.parse::<u16>().unwrap_or_else(|_| 10),
-            Err(_) => 10, // default
+            Ok(attempts) => attempts.parse::<u16>().unwrap_or_else(|_| 10000),
+            Err(_) => 10000, // default
         });
+    pub static METRICS_EXPOSE_PATH: LazyLock<String> =
+        LazyLock::new(|| match var("METRICS_EXPOSE_PATH") {
+            Ok(expose_path) => expose_path,
+            Err(_) => "/actuator/prometheus".to_string(), // default
+        });
+    pub static ALLOCATE_PATH: LazyLock<String> = LazyLock::new(|| match var("ALLOCATE_PATH") {
+        Ok(allocate_path) => allocate_path,
+        Err(_) => "/api/v1/proxy-ports".to_string(), // default
+    });
+    pub static DELETE_PATH: LazyLock<String> = LazyLock::new(|| match var("DELETE_PATH") {
+        Ok(allocate_path) => allocate_path,
+        Err(_) => "/api/v1/proxy-ports/{port}/{session_id}".to_string(), // default
+    });
 }
 
 #[cfg(test)]
@@ -379,7 +401,7 @@ mod integration_tests {
 
         let resp = server
             .delete(&format!(
-                "/api/v1/proxy-ports/{}/sesionid",
+                "/api/v1/proxy-ports/{}/deadbeaf",
                 allocate_resp.proxy_udp_port
             ))
             .await;
@@ -387,7 +409,7 @@ mod integration_tests {
         info!("deleted udp endpoint");
         let resp = server
             .delete(&format!(
-                "/api/v1/proxy-ports/{}/sessionid",
+                "/api/v1/proxy-ports/{}/deadbeaf",
                 allocate_resp.proxy_tcp_port
             ))
             .await;
@@ -447,7 +469,7 @@ mod integration_tests {
         });
         let resp = server
             .delete(&format!(
-                "/api/v1/proxy-ports/{}/sessionid",
+                "/api/v1/proxy-ports/{}/deadbeaf",
                 allocate_resp.proxy_udp_port
             ))
             .await;

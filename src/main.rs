@@ -1,4 +1,5 @@
 use rrr_proxy::consts;
+use rrr_proxy::manager::pmetrics;
 use rrr_proxy::{
     AllocatorService, ProxyManager, manager::load::ReportLoadSysProvider,
     manager::register::RegisterAgent,
@@ -20,6 +21,7 @@ async fn main() {
         }))
         .with(fmt::layer())
         .init();
+    let _ = *pmetrics::globals::PROMETHEUS_HANDLER; // init metrics
     let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
     let load_reporter = Arc::new(ReportLoadSysProvider::new());

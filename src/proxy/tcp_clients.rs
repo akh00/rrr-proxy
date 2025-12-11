@@ -16,7 +16,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, instrument};
 
-use crate::consts;
+use crate::{consts, manager::pmetrics::globals};
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
 
@@ -45,6 +45,7 @@ impl ProxyTcpClient {
             .ok_or("Something went wrong")
             .unwrap();
         let s_stream = TcpStream::connect(remote_adr).await?;
+        (*globals::TCP_CONNECTION_TO_SRV).increment(1);
         Ok(ProxyTcpClient {
             cl_stream: stream,
             s_stream,
@@ -166,6 +167,7 @@ struct ProxyTcpEndpoint {
 
 impl ProxyTcpEndpoint {
     fn new(tcp_listener: TcpListener, msg_tx: Sender<ProxyManagerMsg>, endpoint: Endpoint) -> Self {
+        (*globals::TCP_SOCKET_ALLOCATE).increment(1);
         let clients = HashMap::new();
         ProxyTcpEndpoint {
             tcp_listener,

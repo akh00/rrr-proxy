@@ -26,16 +26,29 @@ impl<T> FixBoxError<T> for Result<T, Box<dyn Error>> {
     }
 }
 
+/*pub(crate) enum ProxyHandler {
+    TcpHandler(ProxyTcpEndpointHandler),
+    UdpHandler(ProxyEndpointHandler),
+}
+*/
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct Session {
+    port: u16,
+    session_id: String,
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct Endpoint {
     port: u16,
     ip: String,
+    session_id: String,
 }
 impl Endpoint {
-    fn new(port: u16, ip: &str) -> Endpoint {
+    fn new(port: u16, ip: &str, session_id: &str) -> Endpoint {
         Endpoint {
             port,
             ip: ip.to_string(),
+            session_id: session_id.to_string(),
         }
     }
 }
@@ -93,8 +106,8 @@ pub enum ProxyManagerMsg {
 #[derive(Debug)]
 pub struct ProxyManager {
     tx: Sender<ProxyManagerMsg>,
-    udp_endpoints: HashMap<u16, Endpoint>,
-    tcp_endpoints: HashMap<u16, Endpoint>,
+    udp_endpoints: HashMap<Session, Endpoint>,
+    tcp_endpoints: HashMap<Session, Endpoint>,
 }
 
 impl ProxyManager {
@@ -212,13 +225,17 @@ impl ProxyManager {
         });
         ProxyManager {
             tx: tx,
-            udp_endpoints: HashMap::<u16, Endpoint>::new(),
-            tcp_endpoints: HashMap::<u16, Endpoint>::new(),
+            udp_endpoints: HashMap::<Session, Endpoint>::new(),
+            tcp_endpoints: HashMap::<Session, Endpoint>::new(),
         }
     }
 
-    pub async fn delete_udp_proxy(&mut self, port: u16) -> Result<(), anyhow::Error> {
-        let endpoint = match self.udp_endpoints.get(&port) {
+    pub async fn delete_udp_proxy(
+        &mut self,
+        port: u16,
+        session_id: String,
+    ) -> Result<(), anyhow::Error> {
+        let endpoint = match self.udp_endpoints.get(&Session { port, session_id }) {
             Some(endpoint) => endpoint,
             None => return Err(anyhow::anyhow!("No such endpoint")),
         };
@@ -244,8 +261,12 @@ impl ProxyManager {
         Ok(())
     }
 
-    pub async fn delete_tcp_proxy(&mut self, port: u16) -> Result<(), anyhow::Error> {
-        let endpoint = match self.tcp_endpoints.get(&port) {
+    pub async fn delete_tcp_proxy(
+        &mut self,
+        port: u16,
+        session_id: String,
+    ) -> Result<(), anyhow::Error> {
+        let endpoint = match self.tcp_endpoints.get(&Session { port, session_id }) {
             Some(endpoint) => endpoint,
             None => return Err(anyhow::anyhow!("No such endpoint")),
         };
@@ -271,7 +292,7 @@ impl ProxyManager {
         Ok(())
     }
 
-    #[instrument(level = "debug")]
+    //  #[instrument(level = "debug")]
     pub async fn create_proxy(
         &mut self,
         request: AllocateRequest,
@@ -279,6 +300,7 @@ impl ProxyManager {
         let endpoint = Endpoint::new(
             request.target_udp_port.parse::<u16>().unwrap(),
             &request.target_ip,
+            &request.session_id,
         );
         let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
         self.tx
@@ -294,7 +316,13 @@ impl ProxyManager {
                         "udp proxy created port:{:?}, endpoint: {:?}",
                         port, &endpoint
                     );
-                    self.udp_endpoints.insert(port, endpoint);
+                    self.udp_endpoints.insert(
+                        Session {
+                            port,
+                            session_id: endpoint.session_id.clone(),
+                        },
+                        endpoint,
+                    );
                     Ok(port)
                 }
                 ProxyManagerMsg::UdpProxyErrorRs { error } => {
@@ -317,58 +345,76 @@ impl ProxyManager {
                 Err(Box::<dyn Error>::from("Something happened"))
             }
         }?;
-        let mut tcp_port = request.target_tcp_port.parse::<u16>().unwrap();
+        let mut tcp_port = request.target_tcp_port.parse::<u16>()?;
         if tcp_port != 0 {
-            let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
-            let endpoint = Endpoint::new(
-                request.target_tcp_port.parse::<u16>().unwrap(),
-                &request.target_ip,
-            );
-            self.tx
-                .send(ProxyManagerMsg::CreateTcpProxy {
-                    respond_to: rx,
-                    endpoint: endpoint.clone(),
-                })
+            tcp_port = self
+                .create_tcp_proxy_internal(&request.target_ip, tcp_port, &request.session_id)
                 .await?;
-            tcp_port = match one_shot_tx.await {
-                Ok(res) => match res {
-                    ProxyManagerMsg::CreateTcpProxyRs { port } => {
-                        self.tcp_endpoints.insert(port, endpoint);
-                        Ok(port)
-                    }
-                    ProxyManagerMsg::UdpProxyErrorRs { error } => {
-                        Err(Box::<dyn Error>::from(error))
-                    }
-                    _ => Err(Box::<dyn Error>::from("Something happened")),
-                },
-                Err(_) => Err(Box::<dyn Error>::from("Something happened")),
-            }?;
+        }
+        let mut ssl_tcp_port = request.target_ssl_tcp_port.parse::<u16>()?;
+        if ssl_tcp_port != 0 {
+            ssl_tcp_port = self
+                .create_tcp_proxy_internal(&request.target_ip, ssl_tcp_port, &request.session_id)
+                .await?;
         }
         Ok(AllocateResponse {
             proxy_udp_port: udp_port,
             proxy_tcp_port: tcp_port,
-            proxy_ssl_tcp_port: 433,
+            proxy_ssl_tcp_port: ssl_tcp_port,
         })
     }
+
+    async fn create_tcp_proxy_internal(
+        &mut self,
+        target_ip: &String,
+        target_tcp_port: u16,
+        session_id: &String,
+    ) -> Result<u16, Box<dyn Error + 'static>> {
+        let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
+        let endpoint = Endpoint::new(target_tcp_port, &target_ip, &session_id);
+        if let Err(_) = self
+            .tx
+            .send(ProxyManagerMsg::CreateTcpProxy {
+                respond_to: rx,
+                endpoint: endpoint.clone(),
+            })
+            .await
+        {
+            Err(Box::<dyn Error>::from(
+                "Can not initiate tcp proxy creation",
+            ))
+        } else {
+            match one_shot_tx.await {
+                Ok(res) => match res {
+                    ProxyManagerMsg::CreateTcpProxyRs { port } => {
+                        self.tcp_endpoints.insert(
+                            Session {
+                                port,
+                                session_id: endpoint.session_id.clone(),
+                            },
+                            endpoint,
+                        );
+                        Ok(port)
+                    }
+                    ProxyManagerMsg::TcpProxyErrorRs { error } => {
+                        Err(Box::<dyn Error>::from(error))
+                    }
+                    _ => Err(Box::<dyn Error>::from("Bad messsage")),
+                },
+                Err(_) => Err(Box::<dyn Error>::from(
+                    "Tcp allocation result has not been recieved",
+                )),
+            }
+        }
+    }
+
     #[instrument(level = "debug")]
     async fn create_udp_proxy_impl(
         udp_proxy: &mut HashMap<Endpoint, ProxyEndpointHandler>,
         endpoint: Endpoint,
         tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
-        if !udp_proxy.contains_key(&endpoint) {
-            let new_proxy = ProxyEndpointHandler::new(endpoint.clone(), tx).await?;
-            let local_port = new_proxy.local_port;
-            udp_proxy.insert(endpoint, new_proxy);
-            Ok(local_port)
-        } else {
-            Err(Box::<dyn Error>::from(std::format!(
-                "There are already proxy created for {:?}",
-                endpoint
-            )))
-        }
-
-        /*     if let Some(handler) = udp_proxy.get(&endpoint) {
+        if let Some(handler) = udp_proxy.get(&endpoint) {
             warn!("There are already proxy created for {:?}", endpoint);
             Ok(handler.local_port)
         } else {
@@ -377,7 +423,6 @@ impl ProxyManager {
             udp_proxy.insert(endpoint, new_proxy);
             Ok(local_port)
         }
-        */
     }
 
     #[instrument(level = "debug")]
