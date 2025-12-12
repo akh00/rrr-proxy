@@ -44,7 +44,7 @@ impl SignalHandler {
             break;
         }
         let _ = sleep(Duration::from_secs(self.delay.into())).await;
-        Ok(())
+        Err(anyhow!("Exiting because of signal"))
     }
 }
 
