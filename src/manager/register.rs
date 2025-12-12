@@ -5,15 +5,48 @@ use tracing::{info, trace};
 
 use futures::SinkExt;
 use futures::{channel::mpsc, future::select, pin_mut};
-use futures_channel::mpsc::UnboundedSender;
+use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use log::debug;
+use signal_hook_tokio::Signals;
 use tokio::time::sleep;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
+use futures::stream::StreamExt;
+
 use crate::consts;
 use crate::manager::load::ReportLoadT;
-use crate::manager::models::{LoadReport, RegisterRequest};
+use crate::manager::models::{DeregisterRequest, LoadReport, RegisterRequest};
+
+pub struct SignalHandler {
+    signals: Signals,
+    delay: u32,
+    tx: UnboundedSender<Message>,
+}
+
+impl SignalHandler {
+    pub fn new(signals: Signals, delay: u32, tx: UnboundedSender<Message>) -> Self {
+        SignalHandler { signals, delay, tx }
+    }
+
+    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
+        while let Some(signal) = self.signals.next().await {
+            info!("Signal catched {:?} scheduling exit", signal);
+            let str_disconnect = serde_json::to_string(&DeregisterRequest {
+                _type: "deregister",
+                drain_period_sec: self.delay,
+            })?;
+            info!("Sending derigister request:{:?}", str_disconnect);
+            let _ = self
+                .tx
+                .send(Message::Text(Utf8Bytes::from(&str_disconnect)))
+                .await?;
+            break;
+        }
+        let _ = sleep(Duration::from_secs(self.delay.into())).await;
+        Ok(())
+    }
+}
 
 struct RegisterClient {
     url: String,
@@ -58,13 +91,18 @@ impl RegisterClient {
 pub struct RegisterAgent {
     url: String,
     load_reporter: Arc<dyn ReportLoadT + Send + Sync>,
+    pub tx: UnboundedSender<Message>,
+    rx: Option<UnboundedReceiver<Message>>,
 }
 
 impl RegisterAgent {
     pub fn new(url: String, load: Arc<dyn ReportLoadT + Send + Sync>) -> Self {
+        let (tx, rx) = futures_channel::mpsc::unbounded();
         RegisterAgent {
             url: url,
             load_reporter: load,
+            tx: tx,
+            rx: Some(rx),
         }
     }
 
@@ -76,7 +114,7 @@ impl RegisterAgent {
         loop {
             tokio::select!(
                 _  = sleep(Duration::from_millis(delay)) => {
-                    if let Ok(load) = Arc::get_mut(&mut self.load_reporter).unwrap().get_load() {
+                    if let Ok(load) = Arc::get_mut(&mut self.load_reporter).ok_or("Can not get load").unwrap().get_load() {
                         let str_load  = serde_json::to_string(&LoadReport{ _type: "load", load: load.percent })?;
                         trace!("Sending report:{}", str_load);
                         if let Err(_) = tx.send(Message::Text(Utf8Bytes::from(&str_load))).await {
@@ -94,7 +132,6 @@ impl RegisterAgent {
     }
 
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
-        let (tx, mut rx) = futures_channel::mpsc::unbounded();
         let client = RegisterClient::new(
             self.url.clone(),
             RegisterRequest {
@@ -109,9 +146,12 @@ impl RegisterAgent {
         let max_attempt = *consts::MAX_REGISTRATION_ATTEMPTS;
         let mut cur_attempt = 0;
         let delay = *consts::HEARTBIT_DELAY;
-
+        let mut reciever = std::mem::replace(&mut self.rx, None).unwrap();
         loop {
-            match tokio::try_join!(client.connect(&mut rx), self.heartbeat(tx.clone())) {
+            match tokio::try_join!(
+                client.connect(&mut reciever),
+                self.heartbeat(self.tx.clone())
+            ) {
                 Ok(_) => {
                     return Ok(());
                 }

@@ -229,7 +229,7 @@ mod integration_tests {
         let load_reporter = Arc::new(ReportLoadSysProvider::new());
         let mut register_agent = RegisterAgent::new(mock_server.uri().await, load_reporter);
         let mock = WsMock::new()
-            // .matcher(StringContains::new("percent"))
+            // .matcher(StringContains::new("percent")
             .matcher(Any::new())
             .respond_with(Message::Text("Pong".into()))
             .expect(2)

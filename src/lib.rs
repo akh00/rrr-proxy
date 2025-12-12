@@ -12,19 +12,23 @@ pub mod consts {
             Ok(reg_endpoint) => reg_endpoint,
             Err(_) => "ws://localhost:5555".to_string(),
         });
+    pub static SERVICE_PORT: LazyLock<u16> = LazyLock::new(|| match var("SERVICE_PORT") {
+        Ok(service_port) => service_port.parse::<u16>().unwrap_or(3333),
+        Err(_) => 3333,
+    });
     pub static TRAFFIC_WAIT_TIMEOUT: LazyLock<u64> =
         LazyLock::new(|| match var("TRAFFIC_WAIT_TIMEOUT") {
-            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap(),
+            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap_or(5000),
             Err(_) => 5000, // default
         });
     pub static HTTP_REQUEST_TIMEOUT: LazyLock<u64> =
         LazyLock::new(|| match var("HTTP_REQUEST_TIMEOUT") {
-            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap(),
+            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap_or(1000),
             Err(_) => 1000, // default
         });
     pub static HTTP_REQUEST_CONCURRENT_NUM: LazyLock<usize> =
         LazyLock::new(|| match var("HTTP_REQUEST_CONCURRENT_NUM") {
-            Ok(concurrent_num) => concurrent_num.parse::<usize>().unwrap(),
+            Ok(concurrent_num) => concurrent_num.parse::<usize>().unwrap_or(128),
             Err(_) => 128, // default
         });
     pub static PUBLIC_IPV4: LazyLock<String> = LazyLock::new(|| match var("PUBLIC_IPV4") {
@@ -49,12 +53,17 @@ pub mod consts {
         Err(_) => Uuid::new_v4().to_string(), // default
     });
     pub static HEARTBIT_DELAY: LazyLock<u64> = LazyLock::new(|| match var("HEARTBIT_DELAY") {
-        Ok(delay) => delay.parse::<u64>().unwrap_or_else(|_| 10000),
+        Ok(delay) => delay.parse::<u64>().unwrap_or(10000),
         Err(_) => 10000, // default
     });
+    pub static GRACEFULLL_SHUTDOWN_DELAY: LazyLock<u32> =
+        LazyLock::new(|| match var("GRACEFULLL_SHUTDOWN_DELAY") {
+            Ok(delay) => delay.parse::<u32>().unwrap_or(10),
+            Err(_) => 10, // default
+        });
     pub static MAX_REGISTRATION_ATTEMPTS: LazyLock<u16> =
         LazyLock::new(|| match var("MAX_REGISTRATION_ATTEMPTS") {
-            Ok(attempts) => attempts.parse::<u16>().unwrap_or_else(|_| 10000),
+            Ok(attempts) => attempts.parse::<u16>().unwrap_or(10000),
             Err(_) => 10000, // default
         });
     pub static METRICS_EXPOSE_PATH: LazyLock<String> =

@@ -36,3 +36,11 @@ pub struct RegisterRequest {
     pub private_ip: String,
     pub az: String,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeregisterRequest {
+    #[serde(rename = "type")]
+    pub _type: &'static str,
+    pub drain_period_sec: u32,
+}
