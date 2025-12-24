@@ -3,6 +3,12 @@ name = "rrr_proxy"
 version = "0.1.0"
 edition = "2024"
 
+#[workspace.metadata.dist.dependencies.apt]
+#gcc-aarch64-linux-gnu = { version = '*', targets = ["aarch64-unknown-linux-gnu", "aarch64-unknown-linux-musl"] }
+
+#[target.aarch64-unknown-linux-gnu]
+#linker = "/usr/bin/aarch64-linux-gnu-gcc"
+
 [dependencies]
 tokio = { version = "1.48.0", features = ["full"] }
 tokio-tungstenite = "0.28.0"
@@ -39,3 +45,6 @@ metrics-exporter-prometheus = "0.18.1"
 metrics = "0.24.3"
 signal-hook-tokio = {version = "0.3.1", features = ["futures-v0_3"]}
 signal-hook = "0.3.18"
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+openssl = { version = "0.10.75", features = ["vendored"] }

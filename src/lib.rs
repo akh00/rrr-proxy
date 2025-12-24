@@ -16,10 +16,14 @@ pub mod consts {
         Ok(service_port) => service_port.parse::<u16>().unwrap_or(3333),
         Err(_) => 3333,
     });
+    pub static METRICS_PORT: LazyLock<u16> = LazyLock::new(|| match var("METRICS_PORT") {
+        Ok(metrics_port) => metrics_port.parse::<u16>().unwrap_or(9321),
+        Err(_) => 9321,
+    });
     pub static TRAFFIC_WAIT_TIMEOUT: LazyLock<u64> =
         LazyLock::new(|| match var("TRAFFIC_WAIT_TIMEOUT") {
-            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap_or(5000),
-            Err(_) => 5000, // default
+            Ok(wait_timeout) => wait_timeout.parse::<u64>().unwrap_or(5),
+            Err(_) => 5, // default
         });
     pub static HTTP_REQUEST_TIMEOUT: LazyLock<u64> =
         LazyLock::new(|| match var("HTTP_REQUEST_TIMEOUT") {
@@ -56,6 +60,11 @@ pub mod consts {
         Ok(delay) => delay.parse::<u64>().unwrap_or(10000),
         Err(_) => 10000, // default
     });
+    pub static UDP_CHANNEL_SIZE: LazyLock<usize> =
+        LazyLock::new(|| match var("UDP_CHANNEL_SIZE") {
+            Ok(delay) => delay.parse::<usize>().unwrap_or(100),
+            Err(_) => 100, // default
+        });
     pub static GRACEFULLL_SHUTDOWN_DELAY: LazyLock<u32> =
         LazyLock::new(|| match var("GRACEFULLL_SHUTDOWN_DELAY") {
             Ok(delay) => delay.parse::<u32>().unwrap_or(10),
@@ -76,7 +85,11 @@ pub mod consts {
         Err(_) => "/api/v1/proxy-ports".to_string(), // default
     });
     pub static DELETE_PATH: LazyLock<String> = LazyLock::new(|| match var("DELETE_PATH") {
-        Ok(allocate_path) => allocate_path,
+        Ok(delete_path) => delete_path,
         Err(_) => "/api/v1/proxy-ports/{port}/{session_id}".to_string(), // default
+    });
+    pub static STATUS_PATH: LazyLock<String> = LazyLock::new(|| match var("STATUS_PATH") {
+        Ok(status_path) => status_path,
+        Err(_) => "/api/v1/status".to_string(), // default
     });
 }

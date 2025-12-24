@@ -14,7 +14,7 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info};
 
 use crate::{consts, manager::pmetrics::globals};
 
@@ -78,27 +78,22 @@ impl ProxyTcpClient {
 
     #[inline]
     async fn write_to_stream(tcp_stream: &TcpStream, buf: &[u8]) -> Result<(), Box<dyn Error>> {
-        let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         loop {
-            select! {
-                _ = tcp_stream.writable() => {
-                    match tcp_stream.try_write(buf) {
-                        Ok(_) => break,
-                        Err(_) => continue,
-                    }
-
-                },
-                _ = sleep(Duration::from_millis(timeout)) => {
-                    return Err(Box::<dyn Error>::from(
-                        "Can not write to tcp stream, timeout",
-                    ))
-               }
+            tcp_stream.writable().await?;
+            match tcp_stream.try_write(buf) {
+                Ok(_) => break,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
             }
         }
         Ok(())
     }
 
-    #[instrument(level = "debug")]
+    #[inline]
     pub async fn run(self) {
         let mut bufi = [0; 64 * 1024];
         let mut bufo = [0; 64 * 1024];
@@ -107,7 +102,7 @@ impl ProxyTcpClient {
             select! {
                 a = Self::read_and_write(&self.cl_stream, &self.s_stream, &mut bufi) => if let Ok(_) = a { continue; } else { break; },
                 b = Self::read_and_write(&self.s_stream, &self.cl_stream, &mut bufo) => if let Ok(_) = b { continue; } else { break; },
-                _ = sleep(Duration::from_millis(timeout)) => {
+                _ = sleep(Duration::from_secs(timeout)) => {
                     info!("ProxyClient: No traffic for {:?} exiting", &self.endpoint);
                     break;
                 }
@@ -133,7 +128,6 @@ pub(crate) struct ProxyTcpEndpointHandler {
 }
 
 impl ProxyTcpEndpointHandler {
-    #[instrument(level = "debug")]
     pub async fn new(
         endpoint: Endpoint,
         msg_tx: Sender<ProxyManagerMsg>,
@@ -176,9 +170,12 @@ impl ProxyTcpEndpoint {
             clients,
         }
     }
+
+    #[inline]
     async fn run(mut self) {
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
-        let (msg_tx, mut rx) = mpsc::channel::<ProxyClientMsg>(1000);
+
+        let (msg_tx, mut rx) = mpsc::channel::<ProxyClientMsg>(10);
         loop {
             select! {
                 a = self.tcp_listener.accept() => {
@@ -210,7 +207,8 @@ impl ProxyTcpEndpoint {
                         break;
                     }
                },
-               _ = sleep(Duration::from_millis(timeout)) => {
+               _ = sleep(Duration::from_secs(timeout)) => {
+                    (*globals::IDLE_TCP_SERVER).increment(1);
                     info!("No traffic on ProxyEndpoint {:?}, exiting", &self.endpoint);
                     break;
                }

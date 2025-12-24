@@ -9,7 +9,7 @@ use axum::{
     routing::{delete, get, post},
 };
 use metrics::{counter, histogram};
-use std::{borrow::Cow, future::ready, sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
@@ -17,8 +17,8 @@ use tracing::{debug, error, info};
 
 use http_body_util::BodyExt;
 
+use crate::proxy::ProxyManagerShared;
 use crate::{consts, manager::models::AllocateRequest};
-use crate::{manager::pmetrics, proxy::ProxyManagerShared};
 
 pub struct AllocatorService {
     pub app: Router,
@@ -29,10 +29,7 @@ impl AllocatorService {
         let app = Router::new()
             .route(&(*consts::ALLOCATE_PATH), post(allocate_proxy))
             .route(&(*consts::DELETE_PATH), delete(delete_proxy))
-            .route(
-                &(*consts::METRICS_EXPOSE_PATH),
-                get(move || ready((*pmetrics::globals::PROMETHEUS_HANDLER).render())),
-            )
+            .route(&(*consts::STATUS_PATH), get(status_proxy))
             .layer(
                 ServiceBuilder::new()
                     // Handle errors from middleware
@@ -155,6 +152,12 @@ async fn delete_proxy(
             Err(_) => StatusCode::BAD_REQUEST.into_response(),
         },
     }
+}
+
+#[axum_macros::debug_handler]
+async fn status_proxy() -> Response {
+    debug!("status request");
+    StatusCode::OK.into_response()
 }
 
 #[axum_macros::debug_handler]

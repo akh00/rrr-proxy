@@ -431,16 +431,14 @@ impl ProxyManager {
         endpoint: Endpoint,
         tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
-        if !tcp_proxy.contains_key(&endpoint) {
+        if let Some(handler) = tcp_proxy.get(&endpoint) {
+            warn!("There are already proxy created for {:?}", endpoint);
+            Ok(handler.local_port)
+        } else {
             let new_proxy = ProxyTcpEndpointHandler::new(endpoint.clone(), tx).await?;
             let local_port = new_proxy.local_port;
             tcp_proxy.insert(endpoint, new_proxy);
             Ok(local_port)
-        } else {
-            Err(Box::<dyn Error>::from(std::format!(
-                "There are already proxy created for {:?}",
-                endpoint
-            )))
         }
     }
 

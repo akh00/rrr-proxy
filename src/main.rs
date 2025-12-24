@@ -1,5 +1,5 @@
 use rrr_proxy::consts;
-use rrr_proxy::manager::pmetrics;
+use rrr_proxy::manager::pmetrics::MetricService;
 use rrr_proxy::manager::register::SignalHandler;
 use rrr_proxy::manager::{
     endpoint::AllocatorService, load::ReportLoadSysProvider, register::RegisterAgent,
@@ -24,7 +24,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }))
         .with(fmt::layer())
         .init();
-    let _ = *pmetrics::globals::PROMETHEUS_HANDLER; // init metrics
+    let mut metrics_exp = MetricService::new();
 
     let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
@@ -39,6 +39,7 @@ async fn main() -> Result<(), anyhow::Error> {
         register_agent.tx.clone(),
     );
     let _ = try_join!(
+        metrics_exp.start(*consts::METRICS_PORT),
         proxy_app.start(*consts::SERVICE_PORT),
         register_agent.run(),
         signal_hnadler.run()
