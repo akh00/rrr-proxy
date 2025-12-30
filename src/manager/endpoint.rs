@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    body::{Body, Bytes},
+    body::Body,
     error_handling::HandleErrorLayer,
     extract::{MatchedPath, Path, Request, State},
     http::StatusCode,
@@ -14,8 +14,6 @@ use tokio::time::Instant;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info};
-
-use http_body_util::BodyExt;
 
 use crate::proxy::ProxyManagerShared;
 use crate::{consts, manager::models::AllocateRequest};
@@ -39,8 +37,6 @@ impl AllocatorService {
                     .timeout(Duration::from_millis(*consts::HTTP_REQUEST_TIMEOUT)) // TODO: move to properties
                     .layer(TraceLayer::new_for_http()),
             )
-            // it's pure for debug purposes
-            .layer(middleware::from_fn(print_request_body))
             .layer(middleware::from_fn(http_metrics))
             .with_state(Arc::clone(&proxy));
         AllocatorService { app }
@@ -54,33 +50,6 @@ impl AllocatorService {
             Err(err) => Err(anyhow::Error::from(err)),
         }
     }
-}
-
-// for debug only
-// middleware that shows how to consume the request body upfront
-async fn print_request_body(request: Request, next: Next) -> Result<impl IntoResponse, Response> {
-    let request = buffer_request_body(request).await?;
-    let response = next.run(request).await;
-    tracing::debug!(body = ?response.body(), "handler received body");
-    Ok(response)
-}
-
-async fn buffer_request_body(request: Request) -> Result<Request, Response> {
-    let (parts, body) = request.into_parts();
-
-    let bytes = body
-        .collect()
-        .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?
-        .to_bytes();
-
-    do_thing_with_request_body(bytes.clone());
-
-    Ok(Request::from_parts(parts, Body::from(bytes)))
-}
-
-fn do_thing_with_request_body(bytes: Bytes) {
-    debug!(body = ?bytes);
 }
 
 // metrcis
