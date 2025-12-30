@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     error::Error,
     net::{SocketAddr, ToSocketAddrs},
     time::Duration,
@@ -14,7 +14,8 @@ use tokio::{
 use tracing::{debug, error, info, trace};
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
-use crate::manager::{FixBoxError, pmetrics};
+use crate::manager::pmetrics;
+use crate::proxy::FixBoxError;
 use crate::{consts, manager::pmetrics::globals};
 //
 //  agent pattern implementation
@@ -144,25 +145,17 @@ impl ProxyRouterClient {
         &mut self,
         addr: &SocketAddr,
         sender: Sender<ProxyClientMsg>,
-    ) -> Result<&ProxyClientHandler, Box<dyn Error>> {
-        if !self.clients.contains_key(&addr) {
-            if let Ok(client) =
-                ProxyClientHandler::new(self.endpoint.clone(), *addr, self.tx.clone(), sender).await
-            {
-                self.clients.insert(*addr, client);
-            } else {
-                error!(
-                    "Can not create new proxy clinet for endpoint{:?}, addr: {:?}",
-                    self.endpoint, addr
-                );
-                return Err(Box::<dyn Error>::from(std::format!(
-                    "Can not create new proxy clinet for endpoint{:?}, addr: {:?}",
-                    self.endpoint,
-                    addr,
-                )));
+    ) -> Result<&ProxyClientHandler, Box<dyn Error + Send + Sync>> {
+        let pch = match self.clients.entry(addr.to_owned()) {
+            Entry::Occupied(eo) => eo.into_mut(),
+            Entry::Vacant(ev) => {
+                let h =
+                    ProxyClientHandler::new(self.endpoint.clone(), *addr, self.tx.clone(), sender)
+                        .await?;
+                ev.insert(h)
             }
-        }
-        Ok(self.clients.get(&addr).unwrap())
+        };
+        Ok(pch)
     }
 
     #[inline]
@@ -173,7 +166,7 @@ impl ProxyRouterClient {
             select! {
                 a = self.rx.recv() => {
                    if let Some((data, addr)) = a {
-                        if let Ok(client) = self.get_or_create_client(&addr, tx.clone()).await.fix_box() {
+                         if let Ok(client) = self.get_or_create_client(&addr, tx.clone()).await.fix_box() {
                             if let Err(_) = client.send(data).await {
                                 error!("Can not send data to proxy clinet {:?}, removing {:?}", client, addr);
                                 self.clients.remove(&addr);
@@ -396,8 +389,8 @@ impl ProxyClientHandler {
         };
         Ok(ProxyClientHandler { tx })
     }
-    async fn send(&self, data: Vec<u8>) -> Result<(), Box<dyn Error>> {
-        self.tx.send(data).await?;
+    async fn send(&self, data: Vec<u8>) -> Result<(), Box<dyn Error + Sync + Send>> {
+        self.tx.send(data).await.fix_box()?;
         Ok(())
     }
 }

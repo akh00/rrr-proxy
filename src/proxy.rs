@@ -1,9 +1,11 @@
 use log::{info, warn};
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{collections::HashMap, error::Error};
 use tcp_clients::ProxyTcpEndpointHandler;
+use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::{RwLock, oneshot};
 use tracing::{debug, error, instrument};
@@ -25,12 +27,23 @@ impl<T> FixBoxError<T> for Result<T, Box<dyn Error>> {
         }
     }
 }
-
-/*pub(crate) enum ProxyHandler {
-    TcpHandler(ProxyTcpEndpointHandler),
-    UdpHandler(ProxyEndpointHandler),
+impl<T> FixBoxError<T> for Result<T, Box<dyn Error + Send + Sync>> {
+    fn fix_box(self) -> Result<T, Box<dyn Error + Send + Sync>> {
+        match self {
+            Err(err) => Err(err.to_string().into()),
+            Ok(t) => Ok(t),
+        }
+    }
 }
-*/
+impl<T> FixBoxError<T> for Result<T, SendError<Vec<u8>>> {
+    fn fix_box(self) -> Result<T, Box<dyn Error + Send + Sync>> {
+        match self {
+            Err(err) => Err(err.to_string().into()),
+            Ok(t) => Ok(t),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct Session {
     port: u16,
@@ -414,15 +427,17 @@ impl ProxyManager {
         endpoint: Endpoint,
         tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
-        if let Some(handler) = udp_proxy.get(&endpoint) {
-            warn!("There are already proxy created for {:?}", endpoint);
-            Ok(handler.local_port)
-        } else {
-            let new_proxy = ProxyEndpointHandler::new(endpoint.clone(), tx).await?;
-            let local_port = new_proxy.local_port;
-            udp_proxy.insert(endpoint, new_proxy);
-            Ok(local_port)
-        }
+        let proxy = match udp_proxy.entry(endpoint.clone()) {
+            Entry::Occupied(oe) => {
+                warn!("There are already udp proxy created");
+                oe.into_mut()
+            }
+            Entry::Vacant(ve) => {
+                let pe = ProxyEndpointHandler::new(endpoint.clone(), tx).await?;
+                ve.insert(pe)
+            }
+        };
+        Ok(proxy.local_port)
     }
 
     #[instrument(level = "debug")]
@@ -431,25 +446,26 @@ impl ProxyManager {
         endpoint: Endpoint,
         tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
-        if let Some(handler) = tcp_proxy.get(&endpoint) {
-            warn!("There are already proxy created for {:?}", endpoint);
-            Ok(handler.local_port)
-        } else {
-            let new_proxy = ProxyTcpEndpointHandler::new(endpoint.clone(), tx).await?;
-            let local_port = new_proxy.local_port;
-            tcp_proxy.insert(endpoint, new_proxy);
-            Ok(local_port)
-        }
+        let proxy = match tcp_proxy.entry(endpoint.clone()) {
+            Entry::Occupied(oe) => {
+                warn!("There are already udp proxy created");
+                oe.into_mut()
+            }
+            Entry::Vacant(ve) => {
+                let pe = ProxyTcpEndpointHandler::new(endpoint.clone(), tx).await?;
+                ve.insert(pe)
+            }
+        };
+        Ok(proxy.local_port)
     }
 
     async fn delete_udp_proxy_impl(
         udp_proxy: &mut HashMap<Endpoint, ProxyEndpointHandler>,
         endpoint: Endpoint,
     ) -> Result<(), Box<dyn Error>> {
-        match udp_proxy.get(&endpoint) {
+        match udp_proxy.remove(&endpoint) {
             Some(handler) => {
                 handler.kill().await;
-                udp_proxy.remove(&endpoint);
                 Ok(())
             }
             None => Err(Box::<dyn Error>::from(std::format!(
@@ -462,10 +478,9 @@ impl ProxyManager {
         tcp_proxy: &mut HashMap<Endpoint, ProxyTcpEndpointHandler>,
         endpoint: Endpoint,
     ) -> Result<(), Box<dyn Error>> {
-        match tcp_proxy.get(&endpoint) {
+        match tcp_proxy.remove(&endpoint) {
             Some(handler) => {
                 handler.kill().await;
-                tcp_proxy.remove(&endpoint);
                 Ok(())
             }
             None => Err(Box::<dyn Error>::from(std::format!(
