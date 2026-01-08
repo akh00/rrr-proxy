@@ -169,7 +169,7 @@ impl ProxyRouterClient {
                 a = self.rx.recv() => {
                    if let Some((data, addr)) = a {
                          if let Ok(client) = self.get_or_create_client(&addr, tx.clone()).await.fix_box() {
-                            if let Err(_) = client.send(data).await {
+                            if let Err(_) = client.tx.send(data).await {
                                 error!("Can not send data to proxy clinet {:?}, removing {:?}", client, addr);
                                 self.clients.remove(&addr);
                                 if self.clients.len() == 0 {
@@ -353,7 +353,7 @@ impl ProxyClient {
 #[derive(Clone, Debug)]
 struct ProxyClientHandler {
     //agent handler
-    tx: Sender<Vec<u8>>,
+    pub(crate) tx: Sender<Vec<u8>>,
 }
 
 impl ProxyClientHandler {
@@ -390,11 +390,5 @@ impl ProxyClientHandler {
             }
         };
         Ok(ProxyClientHandler { tx })
-    }
-
-    #[inline]
-    async fn send(&self, data: Vec<u8>) -> Result<(), Box<dyn Error + Sync + Send>> {
-        self.tx.send(data).await.fix_box()?;
-        Ok(())
     }
 }
