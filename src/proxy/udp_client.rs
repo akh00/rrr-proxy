@@ -1,5 +1,6 @@
+use rustc_hash::FxHashMap;
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::hash_map::Entry,
     error::Error,
     net::{SocketAddr, ToSocketAddrs},
     time::Duration,
@@ -54,7 +55,7 @@ impl ProxyEndpoint {
     #[inline]
     async fn run(mut self) {
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
-        let mut buf = [0; 64 * 1024];
+        let mut buf = [0; 4 * 1024];
         loop {
             select! {
                 a = self.udp_socket.recv_from(&mut buf) => {
@@ -119,7 +120,7 @@ impl ProxyEndpoint {
 struct ProxyRouterClient {
     tx: Sender<(Vec<u8>, SocketAddr)>, // sender to be copied to ms faced clients
     rx: Receiver<(Vec<u8>, SocketAddr)>, // reciever for routing incoming
-    clients: HashMap<SocketAddr, ProxyClientHandler>,
+    clients: FxHashMap<SocketAddr, ProxyClientHandler>,
     endpoint: Endpoint,
     msg_tx: Sender<ProxyManagerMsg>,
 }
@@ -131,7 +132,7 @@ impl ProxyRouterClient {
         msg_tx: Sender<ProxyManagerMsg>,
         endpoint: Endpoint,
     ) -> Self {
-        let clients = HashMap::<SocketAddr, ProxyClientHandler>::new();
+        let clients = FxHashMap::<SocketAddr, ProxyClientHandler>::default();
         ProxyRouterClient {
             tx,
             rx,
@@ -141,6 +142,7 @@ impl ProxyRouterClient {
         }
     }
 
+    #[inline]
     async fn get_or_create_client(
         &mut self,
         addr: &SocketAddr,
@@ -298,7 +300,7 @@ impl ProxyClient {
     #[inline]
     async fn run(mut self) {
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
-        let mut buf = [0; 64 * 1024];
+        let mut buf = [0; 4 * 1024];
         loop {
             select! {
                 a = self.udp_socket.recv(&mut buf) => {
@@ -389,6 +391,8 @@ impl ProxyClientHandler {
         };
         Ok(ProxyClientHandler { tx })
     }
+
+    #[inline]
     async fn send(&self, data: Vec<u8>) -> Result<(), Box<dyn Error + Sync + Send>> {
         self.tx.send(data).await.fix_box()?;
         Ok(())

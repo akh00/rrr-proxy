@@ -74,7 +74,7 @@ mod integration_tests {
         should_fail: bool,
     ) -> impl Future<Output = ()> {
         async move {
-            let mut buf = [0; 64 * 1024];
+            let mut buf = [0; 4 * 1024];
             loop {
                 match reciever.recv_from(&mut buf) {
                     Ok((len, addr_from)) => {
@@ -104,7 +104,7 @@ mod integration_tests {
         should_fail: bool,
     ) -> impl Future<Output = ()> {
         async move {
-            let mut buf = [0; 64 * 1024];
+            let mut buf = [0; 4 * 1024];
             if timeout != 0 {
                 socket
                     .set_read_timeout(Some(Duration::from_millis(timeout)))
@@ -175,7 +175,7 @@ mod integration_tests {
         should_fail: bool,
     ) -> impl Future<Output = ()> {
         async move {
-            let mut buf = [0; 64 * 1024];
+            let mut buf = [0; 4 * 1024];
             let _ = std_listener.set_nonblocking(true);
             let listener = tokio::net::TcpListener::from_std(std_listener)
                 .expect("Should be possible to convert");

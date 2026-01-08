@@ -1,11 +1,11 @@
 use std::{
-    collections::HashMap,
     error::Error,
     fmt::Debug,
     net::{SocketAddr, ToSocketAddrs},
     time::Duration,
 };
 
+use rustc_hash::FxHashMap;
 use tokio::{
     io,
     net::{TcpListener, TcpStream},
@@ -95,8 +95,8 @@ impl ProxyTcpClient {
 
     #[inline]
     pub async fn run(self) {
-        let mut bufi = [0; 64 * 1024];
-        let mut bufo = [0; 64 * 1024];
+        let mut bufi = [0; 4 * 1024];
+        let mut bufo = [0; 4 * 1024];
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         loop {
             select! {
@@ -156,13 +156,13 @@ struct ProxyTcpEndpoint {
     tcp_listener: TcpListener,
     msg_tx: Sender<ProxyManagerMsg>,
     endpoint: Endpoint,
-    clients: HashMap<SocketAddr, JoinHandle<()>>,
+    clients: FxHashMap<SocketAddr, JoinHandle<()>>,
 }
 
 impl ProxyTcpEndpoint {
     fn new(tcp_listener: TcpListener, msg_tx: Sender<ProxyManagerMsg>, endpoint: Endpoint) -> Self {
         (*globals::TCP_SOCKET_ALLOCATE).increment(1);
-        let clients = HashMap::new();
+        let clients = FxHashMap::default();
         ProxyTcpEndpoint {
             tcp_listener,
             msg_tx,

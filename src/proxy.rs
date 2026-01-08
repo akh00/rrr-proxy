@@ -1,9 +1,10 @@
 use log::{info, warn};
+use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
+use std::error::Error;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::{collections::HashMap, error::Error};
 use tcp_clients::ProxyTcpEndpointHandler;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{self, Sender};
@@ -119,8 +120,8 @@ pub enum ProxyManagerMsg {
 #[derive(Debug)]
 pub struct ProxyManager {
     tx: Sender<ProxyManagerMsg>,
-    udp_endpoints: HashMap<Session, Endpoint>,
-    tcp_endpoints: HashMap<Session, Endpoint>,
+    udp_endpoints: FxHashMap<Session, Endpoint>,
+    tcp_endpoints: FxHashMap<Session, Endpoint>,
 }
 
 impl ProxyManager {
@@ -128,8 +129,8 @@ impl ProxyManager {
         let (tx, mut rx) = mpsc::channel::<ProxyManagerMsg>(100);
         let sender_to_pass = tx.clone();
         let _ = tokio::spawn(async move {
-            let mut udp_proxy = HashMap::<Endpoint, ProxyEndpointHandler>::new();
-            let mut tcp_proxy = HashMap::<Endpoint, ProxyTcpEndpointHandler>::new();
+            let mut udp_proxy = FxHashMap::<Endpoint, ProxyEndpointHandler>::default();
+            let mut tcp_proxy = FxHashMap::<Endpoint, ProxyTcpEndpointHandler>::default();
             loop {
                 while let Some(msg) = rx.recv().await {
                     match msg {
@@ -238,8 +239,8 @@ impl ProxyManager {
         });
         ProxyManager {
             tx: tx,
-            udp_endpoints: HashMap::<Session, Endpoint>::new(),
-            tcp_endpoints: HashMap::<Session, Endpoint>::new(),
+            udp_endpoints: FxHashMap::<Session, Endpoint>::default(),
+            tcp_endpoints: FxHashMap::<Session, Endpoint>::default(),
         }
     }
 
@@ -423,7 +424,7 @@ impl ProxyManager {
 
     #[instrument(level = "debug")]
     async fn create_udp_proxy_impl(
-        udp_proxy: &mut HashMap<Endpoint, ProxyEndpointHandler>,
+        udp_proxy: &mut FxHashMap<Endpoint, ProxyEndpointHandler>,
         endpoint: Endpoint,
         tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
@@ -442,7 +443,7 @@ impl ProxyManager {
 
     #[instrument(level = "debug")]
     async fn create_tcp_proxy_impl(
-        tcp_proxy: &mut HashMap<Endpoint, ProxyTcpEndpointHandler>,
+        tcp_proxy: &mut FxHashMap<Endpoint, ProxyTcpEndpointHandler>,
         endpoint: Endpoint,
         tx: Sender<ProxyManagerMsg>,
     ) -> Result<u16, Box<dyn Error>> {
@@ -460,7 +461,7 @@ impl ProxyManager {
     }
 
     async fn delete_udp_proxy_impl(
-        udp_proxy: &mut HashMap<Endpoint, ProxyEndpointHandler>,
+        udp_proxy: &mut FxHashMap<Endpoint, ProxyEndpointHandler>,
         endpoint: Endpoint,
     ) -> Result<(), Box<dyn Error>> {
         match udp_proxy.remove(&endpoint) {
@@ -475,7 +476,7 @@ impl ProxyManager {
         }
     }
     async fn delete_tcp_proxy_impl(
-        tcp_proxy: &mut HashMap<Endpoint, ProxyTcpEndpointHandler>,
+        tcp_proxy: &mut FxHashMap<Endpoint, ProxyTcpEndpointHandler>,
         endpoint: Endpoint,
     ) -> Result<(), Box<dyn Error>> {
         match tcp_proxy.remove(&endpoint) {

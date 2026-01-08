@@ -62,8 +62,8 @@ pub mod consts {
     });
     pub static UDP_CHANNEL_SIZE: LazyLock<usize> =
         LazyLock::new(|| match var("UDP_CHANNEL_SIZE") {
-            Ok(delay) => delay.parse::<usize>().unwrap_or(100),
-            Err(_) => 100, // default
+            Ok(delay) => delay.parse::<usize>().unwrap_or(10),
+            Err(_) => 10, // default
         });
     pub static GRACEFULLL_SHUTDOWN_DELAY: LazyLock<u32> =
         LazyLock::new(|| match var("GRACEFULLL_SHUTDOWN_DELAY") {
