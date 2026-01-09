@@ -16,7 +16,10 @@ use tokio::{
 };
 use tracing::{debug, error, info};
 
-use crate::{consts, manager::pmetrics::globals};
+use crate::{
+    consts,
+    manager::pmetrics::{self, globals},
+};
 
 use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
 
@@ -98,10 +101,12 @@ impl ProxyTcpClient {
         let mut bufi = [0; 4 * 1024];
         let mut bufo = [0; 4 * 1024];
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
+        let client_in_msg_counter = &(*pmetrics::globals::IN_CLIENT_TCP_MESSAGE);
+        let server_in_msg_counter = &(*pmetrics::globals::IN_MS_TCP_MESSAGE);
         loop {
             select! {
-                a = Self::read_and_write(&self.cl_stream, &self.s_stream, &mut bufi) => if let Ok(_) = a { continue; } else { break; },
-                b = Self::read_and_write(&self.s_stream, &self.cl_stream, &mut bufo) => if let Ok(_) = b { continue; } else { break; },
+                a = Self::read_and_write(&self.cl_stream, &self.s_stream, &mut bufi) => if let Ok(_) = a { client_in_msg_counter.increment(1);  continue; } else { break; },
+                b = Self::read_and_write(&self.s_stream, &self.cl_stream, &mut bufo) => if let Ok(_) = b { server_in_msg_counter.increment(1); continue; } else { break; },
                 _ = sleep(Duration::from_secs(timeout)) => {
                     info!("ProxyClient: No traffic for {:?} exiting", &self.endpoint);
                     break;

@@ -11,20 +11,29 @@ pub mod globals {
     use metrics::{Counter, counter};
 
     pub static IN_UDP_SOCKET_COUNTER: LazyLock<Counter> =
-        LazyLock::new(|| counter!("allocate_in_udp_socket"));
+        LazyLock::new(|| counter!("allocate_in_udp_socket_total"));
     pub static OUT_UDP_SOCKET_COUNTER: LazyLock<Counter> =
-        LazyLock::new(|| counter!("allocate_out_udp_socket"));
+        LazyLock::new(|| counter!("allocate_out_udp_socket_total"));
     pub static IDLE_IN_UDP_SOCKET: LazyLock<Counter> =
-        LazyLock::new(|| counter!("idle_in_udp_socket"));
+        LazyLock::new(|| counter!("idle_in_udp_socket_total"));
     pub static IDLE_OUT_UDP_SOCKET: LazyLock<Counter> =
-        LazyLock::new(|| counter!("idle_out_udp_socket"));
+        LazyLock::new(|| counter!("idle_out_udp_socket_total"));
     pub static TCP_CONNECTION_TO_SRV: LazyLock<Counter> =
-        LazyLock::new(|| counter!("tcp_connections_to_ms"));
+        LazyLock::new(|| counter!("tcp_connections_to_ms_total"));
     pub static TCP_SOCKET_ALLOCATE: LazyLock<Counter> =
-        LazyLock::new(|| counter!("allocate_tcp_server"));
+        LazyLock::new(|| counter!("allocate_tcp_server_total"));
     pub static IDLE_IN_TCP_CONNECTION: LazyLock<Counter> =
-        LazyLock::new(|| counter!("idle_in_tcp_connection"));
-    pub static IDLE_TCP_SERVER: LazyLock<Counter> = LazyLock::new(|| counter!("idle_tcp_server"));
+        LazyLock::new(|| counter!("idle_in_tcp_connection_total"));
+    pub static IDLE_TCP_SERVER: LazyLock<Counter> =
+        LazyLock::new(|| counter!("idle_tcp_server_total"));
+    pub static IN_CLIENT_UDP_MESSAGE: LazyLock<Counter> =
+        LazyLock::new(|| counter!("udp_client_income_message_total"));
+    pub static IN_MS_UDP_MESSAGE: LazyLock<Counter> =
+        LazyLock::new(|| counter!("udp_mediaserver_income_message_total"));
+    pub static IN_CLIENT_TCP_MESSAGE: LazyLock<Counter> =
+        LazyLock::new(|| counter!("tcp_client_income_message_total"));
+    pub static IN_MS_TCP_MESSAGE: LazyLock<Counter> =
+        LazyLock::new(|| counter!("tcp_mediaserver_income_message_total"));
 }
 
 pub struct MetricService {

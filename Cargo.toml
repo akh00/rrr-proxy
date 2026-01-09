@@ -46,4 +46,4 @@ openssl = { version = "0.10.75", features = ["vendored"] }
 
 
 [profile.release]
-debug = 1
+debug = 0
