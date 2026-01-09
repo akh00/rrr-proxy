@@ -78,7 +78,7 @@ impl ProxyEndpoint {
                },
                b = self.rx.recv() => {
                    if let Some((res_buf, addr)) = b {
-                        match self.udp_socket.send_to(res_buf.as_slice(), addr).await {
+                        match self.udp_socket.send_to(&res_buf, addr).await {
                             Ok(_) => {
                                     trace!("Sent back to client {:?} buf:{:?}", addr, "somebuffer");
                             },
@@ -317,7 +317,7 @@ impl ProxyClient {
                },
                b = self.rx.recv() => {
                 if let Some(res_buf) = b {
-                   match self.udp_socket.send(res_buf.as_slice()).await {
+                   match self.udp_socket.send(&res_buf).await {
                        Ok(_) => {
                             trace!("Sent buffer to server");
                         },
