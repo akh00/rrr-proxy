@@ -57,6 +57,8 @@ impl ProxyEndpoint {
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let mut buf = [0; 4 * 1024];
         let in_udp_counter = &(*pmetrics::globals::IN_CLIENT_UDP_MESSAGE);
+        let in_udp_idle_counter = &(*pmetrics::globals::IDLE_IN_UDP_SOCKET);
+
         loop {
             select! {
                 a = self.udp_socket.recv_from(&mut buf) => {
@@ -96,7 +98,7 @@ impl ProxyEndpoint {
                     }
                },
                _ = sleep(Duration::from_secs(timeout)) => {
-                    (*globals::IDLE_IN_UDP_SOCKET).increment(1);
+                    in_udp_idle_counter.increment(1);
                     info!("No traffic on ProxyEndpoint {:?}, exiting", &self.endpoint);
                     break;
                }
@@ -239,7 +241,6 @@ impl ProxyRouterClient {
                     }
                 },
                 _ = sleep(Duration::from_secs(timeout)) => {
-                    (*globals::IDLE_OUT_UDP_SOCKET).increment(1);
                     info!("ProxyRouterClient: No traffic for {:?} exiting", &self.endpoint);
                     break;
                }
@@ -342,6 +343,7 @@ impl ProxyClient {
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let mut buf = [0; 4 * 1024];
         let in_udp_server_counter = &(*pmetrics::globals::IN_MS_UDP_MESSAGE);
+        let in_udp_idle = &(*pmetrics::globals::IDLE_OUT_UDP_SOCKET);
         loop {
             select! {
                 a = self.udp_socket.recv(&mut buf) => {
@@ -374,6 +376,7 @@ impl ProxyClient {
                 }
                },
                _ = sleep(Duration::from_secs(timeout)) => {
+                    in_udp_idle.increment(1);
                     info!("ProxyClient: No traffic for {:?} exiting", &self.addr);
                     break;
                }
