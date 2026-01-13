@@ -76,7 +76,11 @@ impl fmt::Display for Endpoint {
 #[derive(Debug)]
 pub enum ProxyClientMsg {
     ClientEnded { addr: SocketAddr },
+    DataSent {},
+    Die {},
 }
+
+pub enum DataMsg {}
 
 pub enum ProxyManagerMsg {
     CreateUdpProxy {

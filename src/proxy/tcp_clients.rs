@@ -199,16 +199,21 @@ impl ProxyTcpEndpoint {
                b = rx.recv() => {
                    if let Some(msg) = b {
                         match msg {
-                            ProxyClientMsg::ClientEnded { addr } => {
-                                self.clients.remove(&addr); //removing one of the accepted tcp connections
-                                if self.clients.len() == 0 {
+                            ProxyClientMsg::ClientEnded{addr}=>
+                            {
+                                self.clients.remove(&addr);
+                                if self.clients.len()==0 {
                                     info!("No clients left for the given endpoint {:?}", &self.endpoint);
                                     break;
                                 }
+                            },
+                            _ => {
+                                error!("UNexpected message");
+                                break;
                             }
                         }
                     } else {
-                        error!("Something wrong ");
+                        error!("Something wrong no message recieved");
                         break;
                     }
                },
