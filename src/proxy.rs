@@ -48,21 +48,21 @@ impl<T> FixBoxError<T> for Result<T, SendError<Vec<u8>>> {
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct Session {
     port: u16,
-    session_id: String,
+    session_id: Arc<str>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct Endpoint {
     port: u16,
-    ip: String,
-    session_id: String,
+    ip: Arc<str>,
+    session_id: Arc<str>,
 }
 impl Endpoint {
     fn new(port: u16, ip: &str, session_id: &str) -> Endpoint {
         Endpoint {
             port,
-            ip: ip.to_string(),
-            session_id: session_id.to_string(),
+            ip: Arc::from(ip),
+            session_id: Arc::from(session_id),
         }
     }
 }
@@ -251,9 +251,12 @@ impl ProxyManager {
     pub async fn delete_udp_proxy(
         &mut self,
         port: u16,
-        session_id: String,
+        session_id: &str,
     ) -> Result<(), anyhow::Error> {
-        let endpoint = match self.udp_endpoints.get(&Session { port, session_id }) {
+        let endpoint = match self.udp_endpoints.get(&Session {
+            port,
+            session_id: Arc::from(session_id),
+        }) {
             Some(endpoint) => endpoint,
             None => return Err(anyhow::anyhow!("No such endpoint")),
         };
@@ -282,9 +285,12 @@ impl ProxyManager {
     pub async fn delete_tcp_proxy(
         &mut self,
         port: u16,
-        session_id: String,
+        session_id: &str,
     ) -> Result<(), anyhow::Error> {
-        let endpoint = match self.tcp_endpoints.get(&Session { port, session_id }) {
+        let endpoint = match self.tcp_endpoints.get(&Session {
+            port,
+            session_id: Arc::from(session_id),
+        }) {
             Some(endpoint) => endpoint,
             None => return Err(anyhow::anyhow!("No such endpoint")),
         };
@@ -384,9 +390,9 @@ impl ProxyManager {
 
     async fn create_tcp_proxy_internal(
         &mut self,
-        target_ip: &String,
+        target_ip: &str,
         target_tcp_port: u16,
-        session_id: &String,
+        session_id: &str,
     ) -> Result<u16, Box<dyn Error + 'static>> {
         let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
         let endpoint = Endpoint::new(target_tcp_port, &target_ip, &session_id);

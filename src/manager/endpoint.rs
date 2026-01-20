@@ -114,9 +114,9 @@ async fn delete_proxy(
 ) -> Response {
     info!("delete request {:?} {:?}", port, session);
     let mut mgr = manager.write().await;
-    match mgr.delete_udp_proxy(port, session.clone()).await {
+    match mgr.delete_udp_proxy(port, session.as_str()).await {
         Ok(_) => StatusCode::OK.into_response(),
-        Err(_) => match mgr.delete_tcp_proxy(port, session).await {
+        Err(_) => match mgr.delete_tcp_proxy(port, session.as_str()).await {
             Ok(_) => StatusCode::OK.into_response(),
             Err(_) => StatusCode::BAD_REQUEST.into_response(),
         },
