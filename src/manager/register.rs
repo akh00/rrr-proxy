@@ -114,7 +114,7 @@ impl RegisterAgent {
         loop {
             tokio::select!(
                 _  = sleep(Duration::from_millis(delay)) => {
-                    if let Ok(load) = Arc::get_mut(&mut self.load_reporter).ok_or("Can not get load").unwrap().get_load() {
+                    if let Ok(load) = Arc::get_mut(&mut self.load_reporter).ok_or(anyhow!("Can not get load"))?.get_load() {
                         let str_load  = serde_json::to_string(&LoadReport{ _type: "load", load: load.percent })?;
                         trace!("Sending report:{}", str_load);
                         if let Err(_) = tx.send(Message::Text(Utf8Bytes::from(&str_load))).await {
@@ -146,7 +146,8 @@ impl RegisterAgent {
         let max_attempt = *consts::MAX_REGISTRATION_ATTEMPTS;
         let mut cur_attempt = 0;
         let delay = *consts::HEARTBIT_DELAY;
-        let mut reciever = std::mem::replace(&mut self.rx, None).unwrap();
+        let mut reciever =
+            std::mem::replace(&mut self.rx, None).ok_or(anyhow!("Can't do mem::replace"))?;
         loop {
             match tokio::try_join!(
                 client.connect(&mut reciever),

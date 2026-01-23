@@ -319,12 +319,12 @@ impl ProxyManager {
     //  #[instrument(level = "debug")]
     pub async fn create_proxy(
         &mut self,
-        request: AllocateRequest,
+        request: &AllocateRequest,
     ) -> Result<AllocateResponse, Box<dyn Error>> {
         let endpoint = Endpoint::new(
-            request.target_udp_port.parse::<u16>().unwrap(),
-            &request.target_ip,
-            &request.session_id,
+            request.target_udp_port.parse::<u16>()?,
+            &request.target_ip.clone(),
+            &request.session_id.clone(),
         );
         let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
         self.tx

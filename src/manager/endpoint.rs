@@ -134,7 +134,7 @@ async fn allocate_proxy(
     State(manager): State<ProxyManagerShared>,
     Json(body): Json<AllocateRequest>,
 ) -> Response {
-    match manager.write().await.create_proxy(body).await {
+    match manager.write().await.create_proxy(&body).await {
         Ok(res) => {
             debug!("Allocation request is successfull");
             Json(res).into_response()

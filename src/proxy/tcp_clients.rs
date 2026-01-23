@@ -42,11 +42,9 @@ impl ProxyTcpClient {
         // just in case resolving
         let remote_adr = endpoint
             .to_string()
-            .to_socket_addrs()
-            .unwrap()
+            .to_socket_addrs()?
             .next()
-            .ok_or("Something went wrong")
-            .unwrap();
+            .ok_or("Something went wrong")?;
         let s_stream = TcpStream::connect(remote_adr).await?;
         (*globals::TCP_CONNECTION_TO_SRV).increment(1);
         Ok(ProxyTcpClient {
