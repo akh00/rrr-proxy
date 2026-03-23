@@ -17,6 +17,9 @@ use crate::proxy::udp_client::ProxyEndpointHandler;
 pub mod tcp_clients;
 pub mod udp_client;
 
+//const MAX_DTGRAM_SIZE: usize = 65_535;
+const MAX_DTGRAM_SIZE: usize = 1500;
+
 pub trait FixBoxError<T> {
     fn fix_box(self) -> Result<T, Box<dyn Error + Send + Sync>>;
 }
@@ -76,8 +79,6 @@ impl fmt::Display for Endpoint {
 #[derive(Debug)]
 pub enum ProxyClientMsg {
     ClientEnded { addr: SocketAddr },
-    DataSent {},
-    Die {},
 }
 
 pub enum DataMsg {}

@@ -17,6 +17,8 @@ mod integration_tests {
     use ws_mock::matchers::Any;
     use ws_mock::ws_mock_server::{WsMock, WsMockServer};
 
+
+    
     use rrr_proxy::manager::{
         endpoint::AllocatorService, load::ReportLoadSysProvider, models::AllocateResponse,
         register::RegisterAgent,

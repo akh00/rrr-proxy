@@ -21,7 +21,7 @@ use crate::{
     manager::pmetrics::{self, globals},
 };
 
-use super::{Endpoint, ProxyClientMsg, ProxyManagerMsg};
+use super::{Endpoint, MAX_DTGRAM_SIZE, ProxyClientMsg, ProxyManagerMsg};
 
 #[derive(Debug)]
 struct ProxyTcpClient {
@@ -96,8 +96,8 @@ impl ProxyTcpClient {
 
     #[inline]
     pub async fn run(self) {
-        let mut bufi = [0; 4 * 1024];
-        let mut bufo = [0; 4 * 1024];
+        let mut bufi = [0; MAX_DTGRAM_SIZE];
+        let mut bufo = [0; MAX_DTGRAM_SIZE];
         let timeout = *consts::TRAFFIC_WAIT_TIMEOUT;
         let client_in_msg_counter = &(*pmetrics::globals::IN_CLIENT_TCP_MESSAGE);
         let server_in_msg_counter = &(*pmetrics::globals::IN_MS_TCP_MESSAGE);
@@ -204,10 +204,6 @@ impl ProxyTcpEndpoint {
                                     info!("No clients left for the given endpoint {:?}", &self.endpoint);
                                     break;
                                 }
-                            },
-                            _ => {
-                                error!("UNexpected message");
-                                break;
                             }
                         }
                     } else {
