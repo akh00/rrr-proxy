@@ -271,6 +271,8 @@ impl ProxyClient {
                }
             }
         }
+        // closed before reporting the end, so the owner can tell this relay from a newer one
+        self.control_rx.close();
         if let Err(err) = self
             .msg_tx
             .send(ProxyClientMsg::ClientEnded { addr: self.addr })

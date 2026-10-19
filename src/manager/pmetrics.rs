@@ -34,6 +34,8 @@ pub mod globals {
         LazyLock::new(|| counter!("tcp_client_income_message_total"));
     pub static IN_MS_TCP_MESSAGE: LazyLock<Counter> =
         LazyLock::new(|| counter!("tcp_mediaserver_income_message_total"));
+    pub static UNROUTED_POOLED_UDP_MESSAGE: LazyLock<Counter> =
+        LazyLock::new(|| counter!("udp_pooled_unrouted_message_total"));
 }
 
 pub struct MetricService {

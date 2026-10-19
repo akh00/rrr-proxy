@@ -40,6 +40,7 @@ metrics = "0.24.3"
 signal-hook-tokio = {version = "0.4.0", features = ["futures-v0_3"]}
 signal-hook = "0.4.1"
 rustc-hash = "2.1.1"
+socket2 = { version = "0.6.1", features = ["all"] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 openssl = { version = "0.10.75", features = ["vendored"] }
