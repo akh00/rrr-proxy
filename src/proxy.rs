@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::error::Error;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tcp_clients::ProxyTcpEndpointHandler;
 use tokio::sync::mpsc::error::SendError;
@@ -64,6 +64,13 @@ impl Endpoint {
             ip: ip.to_string(),
             session_id: session_id.to_string(),
         }
+    }
+
+    fn socket_addr(&self) -> std::io::Result<SocketAddr> {
+        (self.ip.as_str(), self.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| std::io::Error::other("Can not resolve endpoint address"))
     }
 }
 
@@ -320,6 +327,30 @@ impl ProxyManager {
             &request.target_ip,
             &request.session_id,
         );
+        let udp_port = self.create_udp_proxy_internal(endpoint).await?;
+        let mut tcp_port = request.target_tcp_port.parse::<u16>()?;
+        if tcp_port != 0 {
+            tcp_port = self
+                .create_tcp_proxy_internal(&request.target_ip, tcp_port, &request.session_id)
+                .await?;
+        }
+        let mut ssl_tcp_port = request.target_ssl_tcp_port.parse::<u16>()?;
+        if ssl_tcp_port != 0 {
+            ssl_tcp_port = self
+                .create_tcp_proxy_internal(&request.target_ip, ssl_tcp_port, &request.session_id)
+                .await?;
+        }
+        Ok(AllocateResponse {
+            proxy_udp_port: udp_port,
+            proxy_tcp_port: tcp_port,
+            proxy_ssl_tcp_port: ssl_tcp_port,
+        })
+    }
+
+    async fn create_udp_proxy_internal(
+        &mut self,
+        endpoint: Endpoint,
+    ) -> Result<u16, Box<dyn Error>> {
         let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
         self.tx
             .send(ProxyManagerMsg::CreateUdpProxy {
@@ -327,7 +358,7 @@ impl ProxyManager {
                 endpoint: endpoint.clone(),
             })
             .await?;
-        let udp_port = match one_shot_tx.await {
+        match one_shot_tx.await {
             Ok(res) => match res {
                 ProxyManagerMsg::CreateUdpProxyRs { port } => {
                     debug!(
@@ -362,24 +393,7 @@ impl ProxyManager {
                 );
                 Err(Box::<dyn Error>::from("Something happened"))
             }
-        }?;
-        let mut tcp_port = request.target_tcp_port.parse::<u16>()?;
-        if tcp_port != 0 {
-            tcp_port = self
-                .create_tcp_proxy_internal(&request.target_ip, tcp_port, &request.session_id)
-                .await?;
         }
-        let mut ssl_tcp_port = request.target_ssl_tcp_port.parse::<u16>()?;
-        if ssl_tcp_port != 0 {
-            ssl_tcp_port = self
-                .create_tcp_proxy_internal(&request.target_ip, ssl_tcp_port, &request.session_id)
-                .await?;
-        }
-        Ok(AllocateResponse {
-            proxy_udp_port: udp_port,
-            proxy_tcp_port: tcp_port,
-            proxy_ssl_tcp_port: ssl_tcp_port,
-        })
     }
 
     async fn create_tcp_proxy_internal(
