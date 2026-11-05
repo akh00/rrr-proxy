@@ -1,11 +1,5 @@
 use rustc_hash::FxHashMap;
-use std::{
-    collections::hash_map::Entry,
-    error::Error,
-    net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::hash_map::Entry, error::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::UdpSocket,
     select,
@@ -31,6 +25,7 @@ struct ProxyEndpoint {
     udp_socket: Arc<UdpSocket>,
     msg_tx: Sender<ProxyManagerMsg>,
     endpoint: Endpoint,
+    remote_addr: SocketAddr,
     clients: FxHashMap<SocketAddr, ProxyClientHandler>,
 }
 
@@ -39,6 +34,7 @@ impl ProxyEndpoint {
         udp_socket: Arc<UdpSocket>,
         msg_tx: Sender<ProxyManagerMsg>,
         endpoint: Endpoint,
+        remote_addr: SocketAddr,
     ) -> Self {
         (*pmetrics::globals::IN_UDP_SOCKET_COUNTER).increment(1);
         let clients = FxHashMap::<SocketAddr, ProxyClientHandler>::default();
@@ -46,6 +42,7 @@ impl ProxyEndpoint {
             udp_socket,
             msg_tx,
             endpoint,
+            remote_addr,
             clients,
         }
     }
@@ -60,7 +57,7 @@ impl ProxyEndpoint {
         let pch = match self.clients.entry(addr.to_owned()) {
             Entry::Occupied(eo) => eo.into_mut(),
             Entry::Vacant(ev) => {
-                let h = allocate_handler(&self.endpoint, *addr, target_socket, sender).await?;
+                let h = allocate_handler(self.remote_addr, *addr, target_socket, sender).await?;
                 ev.insert(h)
             }
         };
@@ -149,13 +146,18 @@ impl ProxyEndpointHandler {
         endpoint: Endpoint,
         msg_tx: Sender<ProxyManagerMsg>,
     ) -> Result<Self, Box<dyn Error>> {
+        let remote_addr = endpoint.socket_addr()?;
         let local_socket = UdpSocket::bind("0.0.0.0:0").await?;
         let port: u16 = local_socket.local_addr()?.port();
 
         debug!("udp port allocated {:?}", port);
 
-        let pr_endpoint =
-            ProxyEndpoint::new(Arc::new(local_socket), msg_tx.clone(), endpoint.clone());
+        let pr_endpoint = ProxyEndpoint::new(
+            Arc::new(local_socket),
+            msg_tx.clone(),
+            endpoint.clone(),
+            remote_addr,
+        );
 
         let handle = tokio::spawn(async move {
             pr_endpoint.run().await;
@@ -173,14 +175,14 @@ impl ProxyEndpointHandler {
 }
 
 #[derive(Debug)]
-struct ProxyClientHandler {
-    socket: Arc<UdpSocket>,
-    sender: Sender<ProxyClientMsg>,
+pub(super) struct ProxyClientHandler {
+    pub(super) socket: Arc<UdpSocket>,
+    pub(super) sender: Sender<ProxyClientMsg>,
     handler: JoinHandle<()>,
 }
 
 #[derive(Debug)]
-struct ProxyClient {
+pub(super) struct ProxyClient {
     socket: Arc<UdpSocket>,
     target_socket: Arc<UdpSocket>,
     addr: SocketAddr,
@@ -210,7 +212,7 @@ impl ProxyClient {
     }
 
     #[inline]
-    async fn send(
+    pub(super) async fn send(
         socket: &Arc<UdpSocket>,
         data: &[u8],
         sender: &Sender<ProxyClientMsg>,
@@ -269,6 +271,8 @@ impl ProxyClient {
                }
             }
         }
+        // closed before reporting the end, so the owner can tell this relay from a newer one
+        self.control_rx.close();
         if let Err(err) = self
             .msg_tx
             .send(ProxyClientMsg::ClientEnded { addr: self.addr })
@@ -289,17 +293,12 @@ impl Drop for ProxyClientHandler {
 }
 
 #[inline]
-async fn allocate_handler(
-    endpoint: &Endpoint,
+pub(super) async fn allocate_handler(
+    remote_addr: SocketAddr,
     client_addr: SocketAddr,
     target_socket: Arc<UdpSocket>,
     msg_sender: Sender<ProxyClientMsg>,
 ) -> Result<ProxyClientHandler, Box<dyn Error + Send + Sync>> {
-    let remote_addr = endpoint
-        .to_string()
-        .to_socket_addrs()?
-        .next()
-        .ok_or("Something went wrong")?;
     let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
     let _ = match udp_socket.connect(remote_addr).await {
         Ok(_) => {

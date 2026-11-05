@@ -88,6 +88,17 @@ pub mod consts {
         Ok(delete_path) => delete_path,
         Err(_) => "/api/v1/proxy-ports/{port}/{session_id}".to_string(), // default
     });
+    // 0 keeps a dedicated udp port per session; N > 0 shares N pooled ports routed by ICE ufrag
+    pub static UDP_POOL_SIZE: LazyLock<usize> = LazyLock::new(|| match var("UDP_POOL_SIZE") {
+        Ok(size) => size.parse::<usize>().unwrap_or(0),
+        Err(_) => 0, // default
+    });
+    // first pooled port, the pool takes consecutive ports; 0 binds ephemeral ports
+    pub static UDP_POOL_BASE_PORT: LazyLock<u16> =
+        LazyLock::new(|| match var("UDP_POOL_BASE_PORT") {
+            Ok(port) => port.parse::<u16>().unwrap_or(0),
+            Err(_) => 0, // default
+        });
     pub static STATUS_PATH: LazyLock<String> = LazyLock::new(|| match var("STATUS_PATH") {
         Ok(status_path) => status_path,
         Err(_) => "/api/v1/status".to_string(), // default

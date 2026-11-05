@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::error::Error;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tcp_clients::ProxyTcpEndpointHandler;
 use tokio::sync::mpsc::error::SendError;
@@ -13,9 +13,12 @@ use tracing::{debug, error, instrument};
 
 use crate::manager::models::{AllocateRequest, AllocateResponse};
 use crate::proxy::udp_client::ProxyEndpointHandler;
+use crate::proxy::udp_pooled::PooledUdpEndpointHandler;
 
+pub mod stun;
 pub mod tcp_clients;
 pub mod udp_client;
+pub mod udp_pooled;
 
 pub trait FixBoxError<T> {
     fn fix_box(self) -> Result<T, Box<dyn Error + Send + Sync>>;
@@ -64,6 +67,13 @@ impl Endpoint {
             ip: ip.to_string(),
             session_id: session_id.to_string(),
         }
+    }
+
+    fn socket_addr(&self) -> std::io::Result<SocketAddr> {
+        (self.ip.as_str(), self.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| std::io::Error::other("Can not resolve endpoint address"))
     }
 }
 
@@ -121,11 +131,23 @@ pub enum ProxyManagerMsg {
     },
 }
 
+/// How inbound udp ports are handed out to sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UdpProxyMode {
+    /// A dedicated port per session, closed when idle or deleted.
+    PerSession,
+    /// A fixed pool of ports shared by all sessions, routed by the ICE ufrag in STUN USERNAME.
+    Pooled,
+}
+
 #[derive(Debug)]
 pub struct ProxyManager {
     tx: Sender<ProxyManagerMsg>,
     udp_endpoints: FxHashMap<Session, Endpoint>,
     tcp_endpoints: FxHashMap<Session, Endpoint>,
+    udp_mode: UdpProxyMode,
+    udp_pool: Vec<PooledUdpEndpointHandler>,
+    next_pooled: usize,
 }
 
 impl ProxyManager {
@@ -245,7 +267,53 @@ impl ProxyManager {
             tx: tx,
             udp_endpoints: FxHashMap::<Session, Endpoint>::default(),
             tcp_endpoints: FxHashMap::<Session, Endpoint>::default(),
+            udp_mode: UdpProxyMode::PerSession,
+            udp_pool: Vec::new(),
+            next_pooled: 0,
         }
+    }
+
+    /// A `pool_size` of 0 is the per-session mode. Otherwise binds `pool_size` pooled ports from
+    /// `base_port` (0 for ephemeral ports), tolerating partial failures as long as one binds.
+    pub fn with_udp_pool(pool_size: usize, base_port: u16) -> Result<Self, anyhow::Error> {
+        let mut manager = Self::new();
+        for i in 0..pool_size {
+            let port = match base_port {
+                0 => 0,
+                _ => u16::try_from(i)
+                    .ok()
+                    .and_then(|i| base_port.checked_add(i))
+                    .ok_or_else(|| anyhow::anyhow!("udp pool exceeds the port range"))?,
+            };
+            match PooledUdpEndpointHandler::bind(port) {
+                Ok(handler) => manager.udp_pool.push(handler),
+                Err(error) => error!(
+                    error = ?error,
+                    "Failed to bind pooled udp socket {} of {} on port {}",
+                    i + 1,
+                    pool_size,
+                    port
+                ),
+            }
+        }
+        if pool_size > 0 {
+            if manager.udp_pool.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Could not bind any of the {} pooled udp sockets",
+                    pool_size
+                ));
+            }
+            manager.udp_mode = UdpProxyMode::Pooled;
+        }
+        Ok(manager)
+    }
+
+    pub fn udp_mode(&self) -> UdpProxyMode {
+        self.udp_mode
+    }
+
+    pub fn pooled_udp_ports(&self) -> Vec<u16> {
+        self.udp_pool.iter().map(|p| p.local_port).collect()
     }
 
     pub async fn delete_udp_proxy(
@@ -253,6 +321,9 @@ impl ProxyManager {
         port: u16,
         session_id: String,
     ) -> Result<(), anyhow::Error> {
+        if self.udp_mode == UdpProxyMode::Pooled {
+            return self.delete_pooled_udp_proxy(port, session_id).await;
+        }
         let endpoint = match self.udp_endpoints.get(&Session { port, session_id }) {
             Some(endpoint) => endpoint,
             None => return Err(anyhow::anyhow!("No such endpoint")),
@@ -320,6 +391,36 @@ impl ProxyManager {
             &request.target_ip,
             &request.session_id,
         );
+        let udp_port = match self.udp_mode {
+            UdpProxyMode::PerSession => self.create_udp_proxy_internal(endpoint).await?,
+            UdpProxyMode::Pooled => {
+                self.create_pooled_udp_proxy(endpoint, request.ufrag.as_deref())
+                    .await?
+            }
+        };
+        let mut tcp_port = request.target_tcp_port.parse::<u16>()?;
+        if tcp_port != 0 {
+            tcp_port = self
+                .create_tcp_proxy_internal(&request.target_ip, tcp_port, &request.session_id)
+                .await?;
+        }
+        let mut ssl_tcp_port = request.target_ssl_tcp_port.parse::<u16>()?;
+        if ssl_tcp_port != 0 {
+            ssl_tcp_port = self
+                .create_tcp_proxy_internal(&request.target_ip, ssl_tcp_port, &request.session_id)
+                .await?;
+        }
+        Ok(AllocateResponse {
+            proxy_udp_port: udp_port,
+            proxy_tcp_port: tcp_port,
+            proxy_ssl_tcp_port: ssl_tcp_port,
+        })
+    }
+
+    async fn create_udp_proxy_internal(
+        &mut self,
+        endpoint: Endpoint,
+    ) -> Result<u16, Box<dyn Error>> {
         let (rx, one_shot_tx) = oneshot::channel::<ProxyManagerMsg>();
         self.tx
             .send(ProxyManagerMsg::CreateUdpProxy {
@@ -327,7 +428,7 @@ impl ProxyManager {
                 endpoint: endpoint.clone(),
             })
             .await?;
-        let udp_port = match one_shot_tx.await {
+        match one_shot_tx.await {
             Ok(res) => match res {
                 ProxyManagerMsg::CreateUdpProxyRs { port } => {
                     debug!(
@@ -362,24 +463,61 @@ impl ProxyManager {
                 );
                 Err(Box::<dyn Error>::from("Something happened"))
             }
-        }?;
-        let mut tcp_port = request.target_tcp_port.parse::<u16>()?;
-        if tcp_port != 0 {
-            tcp_port = self
-                .create_tcp_proxy_internal(&request.target_ip, tcp_port, &request.session_id)
-                .await?;
         }
-        let mut ssl_tcp_port = request.target_ssl_tcp_port.parse::<u16>()?;
-        if ssl_tcp_port != 0 {
-            ssl_tcp_port = self
-                .create_tcp_proxy_internal(&request.target_ip, ssl_tcp_port, &request.session_id)
-                .await?;
+    }
+
+    async fn create_pooled_udp_proxy(
+        &mut self,
+        endpoint: Endpoint,
+        ufrag: Option<&str>,
+    ) -> Result<u16, Box<dyn Error>> {
+        let ufrag = match ufrag {
+            Some(ufrag) if !ufrag.is_empty() => ufrag,
+            _ => {
+                return Err(Box::<dyn Error>::from(
+                    "ufrag is required in pooled udp mode",
+                ));
+            }
+        };
+        let target = endpoint.socket_addr()?;
+        // round robin spreads sessions evenly over the pooled sockets
+        let pooled = &self.udp_pool[self.next_pooled % self.udp_pool.len()];
+        self.next_pooled = self.next_pooled.wrapping_add(1);
+        let port = pooled.local_port;
+        pooled
+            .add_route(endpoint.session_id.clone(), ufrag.to_string(), target)
+            .await
+            .map_err(|err| err.to_string())?;
+        debug!(
+            "pooled udp proxy port:{:?}, endpoint: {:?}",
+            port, &endpoint
+        );
+        self.udp_endpoints.insert(
+            Session {
+                port,
+                session_id: endpoint.session_id.clone(),
+            },
+            endpoint,
+        );
+        Ok(port)
+    }
+
+    async fn delete_pooled_udp_proxy(
+        &mut self,
+        port: u16,
+        session_id: String,
+    ) -> Result<(), anyhow::Error> {
+        let session = Session { port, session_id };
+        if self.udp_endpoints.remove(&session).is_none() {
+            return Err(anyhow::anyhow!("No such endpoint"));
         }
-        Ok(AllocateResponse {
-            proxy_udp_port: udp_port,
-            proxy_tcp_port: tcp_port,
-            proxy_ssl_tcp_port: ssl_tcp_port,
-        })
+        match self.udp_pool.iter().find(|p| p.local_port == port) {
+            Some(pooled) => match pooled.remove_session(session.session_id).await {
+                Ok(_) => Ok(()),
+                Err(err) => Err(anyhow::anyhow!(err.to_string())),
+            },
+            None => Err(anyhow::anyhow!("No such pooled port")),
+        }
     }
 
     async fn create_tcp_proxy_internal(

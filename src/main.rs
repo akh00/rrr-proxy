@@ -9,6 +9,7 @@ use signal_hook::consts::*;
 use signal_hook_tokio::Signals;
 use std::sync::Arc;
 use tokio::{sync::RwLock, try_join};
+use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -26,7 +27,14 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
     let mut metrics_exp = MetricService::new();
 
-    let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
+    let proxy_manager =
+        ProxyManager::with_udp_pool(*consts::UDP_POOL_SIZE, *consts::UDP_POOL_BASE_PORT)?;
+    info!(
+        "udp proxy mode: {:?}, pooled ports: {:?}",
+        proxy_manager.udp_mode(),
+        proxy_manager.pooled_udp_ports()
+    );
+    let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(proxy_manager));
 
     let load_reporter = Arc::new(ReportLoadSysProvider::new());
     let mut register_agent =

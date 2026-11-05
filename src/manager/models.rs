@@ -7,6 +7,8 @@ pub struct AllocateRequest {
     pub target_ssl_tcp_port: String,
     pub target_ip: String,
     pub session_id: String,
+    #[serde(default)]
+    pub ufrag: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
