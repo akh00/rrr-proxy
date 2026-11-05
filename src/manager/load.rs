@@ -15,12 +15,17 @@ pub struct ReportLoadSysProvider {
 
 impl ReportLoadSysProvider {
     pub fn new() -> ReportLoadSysProvider {
-        let system = System::new_with_specifics(
-            RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
-        );
-        ReportLoadSysProvider { system }
+        let result  = System::new_with_specifics( RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),); 
+        ReportLoadSysProvider { system: result.expect("Error during system contsruction") }
     }
+} 
+
+impl Default for ReportLoadSysProvider {
+     fn default() -> Self {
+         Self::new()
+     }
 }
+
 impl ReportLoadT for ReportLoadSysProvider {
     fn get_load(&mut self) -> Result<ReportLoad, Box<dyn Error + Send + Sync>> {
         self.system.refresh_cpu_usage();

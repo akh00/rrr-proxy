@@ -251,7 +251,7 @@ mod integration_tests {
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
         let manager_app = AllocatorService::new(Arc::clone(&proxy_manager));
-        let server = TestServer::new(manager_app.app).expect("Should create test server");
+        let server = TestServer::new(manager_app.app);
 
         let mut tasks = Vec::new();
         let mut upd_port = 0;
@@ -338,7 +338,7 @@ mod integration_tests {
             ))
             .await;
         info!("deleted tcp endpoint");
-        resp.assert_status(StatusCode::OK)
+        resp.assert_status(StatusCode::OK);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -347,7 +347,7 @@ mod integration_tests {
         let proxy_manager = Arc::new(RwLock::<ProxyManager>::new(ProxyManager::new()));
 
         let manager_app = AllocatorService::new(Arc::clone(&proxy_manager));
-        let server = TestServer::new(manager_app.app).expect("Should create test server");
+        let server = TestServer::new(manager_app.app);
 
         let mut tasks = Vec::new();
         let mut upd_port = 0;

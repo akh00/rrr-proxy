@@ -19,7 +19,7 @@ mod pooled_udp_tests {
 
     fn server(manager: ProxyManager) -> TestServer {
         let app = AllocatorService::new(Arc::new(RwLock::new(manager))).app;
-        TestServer::new(app).expect("Should create test server")
+        TestServer::new(app)
     }
 
     fn binding_request(ufrag: &str) -> Vec<u8> {
